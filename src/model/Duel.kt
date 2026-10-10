@@ -74,14 +74,18 @@ class Duel(
         require(!isFinished) { "El duelo ya terminó" }
         isFinished = true
         _selected.clear()
-        val cmp = playerResult().compareTo(enemyResult())
-        return when {
-            cmp > 0 -> DuelOutcome.WIN
-            cmp < 0 -> DuelOutcome.LOSE
-            else -> DuelOutcome.DRAW
+        val player = playerScore().total
+        val enemy = enemyScore.total
+        return if (player > enemy) DuelOutcome.WIN else DuelOutcome.LOSE
+
+
+
         }
-    }
+
 
     fun playerResult() = PokerEvaluator.evaluate(playerHand)
     fun enemyResult() = PokerEvaluator.evaluate(enemyHand)
+    val enemyScore: ScoreBreakdown = Scoring.score(enemyHand)
+    fun playerScore(): ScoreBreakdown = Scoring.score(playerHand)
+    val targetScore: Int get() = enemyScore.total
 }

@@ -26,12 +26,10 @@ private fun Card.short(): String {
 
 private fun List<Card>.show() = joinToString(" ") { it.short() }
 
-// ---------- jugador automático (hace lo mismo que harían los botones) ----------
+// ---------- jugador automático ----------
 
-// Si ya tiene escalera o mejor, se planta. Si no, descarta (hasta 3) las cartas
-// sueltas más bajas, conservando pares, tríos, etc.
+// Descarta (hasta 3) las cartas sueltas más bajas, conservando pares, tríos, etc.
 private fun chooseDiscards(hand: List<Card>): Set<Int> {
-    if (PokerEvaluator.evaluate(hand).category >= HandCategory.STRAIGHT) return emptySet()
     val counts = hand.groupingBy { it.rank }.eachCount()
     return hand.indices
         .filter { counts.getValue(hand[it].rank) == 1 }
@@ -40,12 +38,13 @@ private fun chooseDiscards(hand: List<Card>): Set<Int> {
         .toSet()
 }
 
+// Mientras no supere el objetivo y le queden rondas, descarta. Luego pulsa "Duelo".
 private fun autoPlay(duel: Duel, log: Boolean = false): DuelOutcome {
     if (log) {
-        println("Rival:   ${duel.enemyHand.show()}  -> ${duel.enemyResult().category}")
-        println("Jugador: ${duel.playerHand.show()}  -> ${duel.playerResult().category}")
+        println("Rival:   ${duel.enemyHand.show()}  -> ${duel.enemyScore.describe()}")
+        println("Jugador: ${duel.playerHand.show()}  -> ${duel.playerScore().describe()}  (objetivo: ${duel.targetScore})")
     }
-    while (duel.roundsLeft > 0) {
+    while (duel.roundsLeft > 0 && duel.playerScore().total <= duel.targetScore) {
         val toDiscard = chooseDiscards(duel.playerHand)
         if (toDiscard.isEmpty()) break
         val dropped = toDiscard.map { duel.playerHand[it] }
@@ -53,12 +52,58 @@ private fun autoPlay(duel: Duel, log: Boolean = false): DuelOutcome {
         duel.discardSelected()
         if (log) {
             println("Descarta: ${dropped.show()}")
-            println("Jugador:  ${duel.playerHand.show()}  -> ${duel.playerResult().category}")
+            println("Jugador:  ${duel.playerHand.show()}  -> ${duel.playerScore().describe()}")
         }
     }
     val outcome = duel.fight()
     if (log) println("Resultado: $outcome  (rondas usadas: ${duel.roundsUsed})\n")
     return outcome
+}
+
+// ---------- estadísticas ----------
+
+private class Stats(val total: Int) {
+    var wins = 0
+    var losses = 0
+    var draws = 0
+    var rounds = 0
+    var playerScoreSum = 0L
+    var enemyScoreSum = 0L
+
+    fun pct(n: Int) = n * 100 / total
+    fun avg(sum: Long) = sum / total
+    fun avgRounds() = (rounds * 100.0 / total).toInt() / 100.0
+
+    fun print(label: String) {
+        println(
+            "$label | victorias ${pct(wins)}% | derrotas ${pct(losses)}% | empates ${pct(draws)}% | " +
+                "puntaje jugador ${avg(playerScoreSum)} vs rival ${avg(enemyScoreSum)} | rondas prom. ${avgRounds()}"
+        )
+    }
+}
+
+private fun simulate(total: Int, enemyMin: HandCategory): Stats {
+    val stats = Stats(total)
+    repeat(total) { seed ->
+        val duel = Duel(Deck(Random(seed)), enemyMin)
+        when (autoPlay(duel)) {
+            DuelOutcome.WIN -> stats.wins++
+            DuelOutcome.LOSE -> stats.losses++
+            DuelOutcome.DRAW -> stats.draws++
+        }
+        stats.rounds += duel.roundsUsed
+        stats.playerScoreSum += duel.playerScore().total
+        stats.enemyScoreSum += duel.enemyScore.total
+
+        // Reglas que nunca deben romperse
+        val allCards = duel.playerHand + duel.enemyHand + duel.discardPile
+        assertEquals(allCards.size, allCards.toSet().size, "Carta repetida en la semilla $seed")
+        assertTrue(duel.discardPile.size <= Duel.MAX_ROUNDS * Duel.MAX_DISCARD_PER_ROUND)
+        assertTrue(duel.roundsUsed <= Duel.MAX_ROUNDS)
+        assertTrue(duel.isFinished)
+        assertTrue(duel.enemyResult().category >= enemyMin, "Rival por debajo del mínimo en la semilla $seed")
+    }
+    return stats
 }
 
 // ---------- tests ----------
@@ -73,30 +118,16 @@ class DuelSimulationTest {
     }
 
     @Test fun manyGamesKeepRulesIntact() {
-        val total = 2000
-        val results = mutableMapOf(DuelOutcome.WIN to 0, DuelOutcome.LOSE to 0, DuelOutcome.DRAW to 0)
-        val enemyCategories = mutableMapOf<HandCategory, Int>()
+        val stats = simulate(2000, HandCategory.ONE_PAIR)
+        stats.print("2000 partidas (rival mínimo ONE_PAIR)")
+        assertEquals(2000, stats.wins + stats.losses + stats.draws)
+    }
 
-        repeat(total) { seed ->
-            val duel = Duel(Deck(Random(seed)))
-            val outcome = autoPlay(duel)
-            results[outcome] = results.getValue(outcome) + 1
-            enemyCategories[duel.enemyResult().category] =
-                (enemyCategories[duel.enemyResult().category] ?: 0) + 1
-
-            // Reglas que nunca deben romperse
-            val allCards = duel.playerHand + duel.enemyHand + duel.discardPile
-            assertEquals(allCards.size, allCards.toSet().size, "Carta repetida en la semilla $seed")
-            assertTrue(duel.discardPile.size <= 9)
-            assertTrue(duel.roundsUsed <= Duel.MAX_ROUNDS)
-            assertTrue(duel.isFinished)
+    // No tiene aserciones de balance: solo imprime para que el equipo decida
+    @Test fun difficultyComparison() {
+        println("Comparación de dificultad (1000 partidas cada una):")
+        listOf(HandCategory.ONE_PAIR, HandCategory.TWO_PAIR, HandCategory.THREE_OF_A_KIND).forEach { min ->
+            simulate(1000, min).print("Rival mínimo $min".padEnd(32))
         }
-
-        println("Resultados de $total partidas:")
-        results.forEach { (k, v) -> println("  $k: $v (${v * 100 / total}%)") }
-        println("Manos del rival:")
-        enemyCategories.entries.sortedBy { it.key }.forEach { println("  ${it.key}: ${it.value}") }
-
-        assertEquals(total, results.values.sum())
     }
 }
