@@ -54,7 +54,7 @@ object PokerEvaluator {
     private fun straightHigh(sortedDesc: List<Int>): Int? {
         if (sortedDesc.toSet().size != 5) return null
         if (sortedDesc[0] - sortedDesc[4] == 4) return sortedDesc[0]
-        if (sortedDesc == listOf(14, 5, 4, 3, 2)) return 5 // A-2-3-4-5
+        if (sortedDesc == listOf(14, 5, 4, 3, 2)) return 5
         return null
     }
 }

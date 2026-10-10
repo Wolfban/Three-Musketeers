@@ -26,9 +26,7 @@ private fun Card.short(): String {
 
 private fun List<Card>.show() = joinToString(" ") { it.short() }
 
-// ---------- jugador automático ----------
 
-// Descarta (hasta 3) las cartas sueltas más bajas, conservando pares, tríos, etc.
 private fun chooseDiscards(hand: List<Card>): Set<Int> {
     val counts = hand.groupingBy { it.rank }.eachCount()
     return hand.indices
@@ -38,7 +36,7 @@ private fun chooseDiscards(hand: List<Card>): Set<Int> {
         .toSet()
 }
 
-// Mientras no supere el objetivo y le queden rondas, descarta. Luego pulsa "Duelo".
+
 private fun autoPlay(duel: Duel, log: Boolean = false): DuelOutcome {
     if (log) {
         println("Rival:   ${duel.enemyHand.show()}  -> ${duel.enemyScore.describe()}")
@@ -60,7 +58,6 @@ private fun autoPlay(duel: Duel, log: Boolean = false): DuelOutcome {
     return outcome
 }
 
-// ---------- estadísticas ----------
 
 private class Stats(val total: Int) {
     var wins = 0
@@ -106,7 +103,7 @@ private fun simulate(total: Int, enemyMin: HandCategory): Stats {
     return stats
 }
 
-// ---------- tests ----------
+
 
 class DuelSimulationTest {
 
@@ -123,7 +120,6 @@ class DuelSimulationTest {
         assertEquals(2000, stats.wins + stats.losses + stats.draws)
     }
 
-    // No tiene aserciones de balance: solo imprime para que el equipo decida
     @Test fun difficultyComparison() {
         println("Comparación de dificultad (1000 partidas cada una):")
         listOf(HandCategory.ONE_PAIR, HandCategory.TWO_PAIR, HandCategory.THREE_OF_A_KIND).forEach { min ->

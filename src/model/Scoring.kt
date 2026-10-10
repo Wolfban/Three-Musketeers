@@ -9,7 +9,7 @@ data class ScoreBreakdown(
 ) {
     val total: Int get() = (baseChips + cardChips) * multiplier
 
-    /** Texto para mostrar en pantalla, ej: "FLUSH: (35 + 50) × 4 = 340" */
+
     fun describe(): String = "$category: ($baseChips + $cardChips) × $multiplier = $total"
 }
 

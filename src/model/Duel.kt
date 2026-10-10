@@ -29,7 +29,7 @@ class Duel(
 
     val roundsLeft: Int get() = MAX_ROUNDS - roundsUsed
 
-    /** El botón de descarte solo se activa si hay cartas seleccionadas, quedan rondas y el duelo sigue abierto. */
+
     val canDiscard: Boolean get() = !isFinished && roundsLeft > 0 && _selected.isNotEmpty()
 
     // Re-baraja y reparte hasta que el rival tenga al menos la categoría mínima.
@@ -52,7 +52,7 @@ class Duel(
         return true
     }
 
-    /** Acción del botón "Descartar": descarta las cartas seleccionadas y roba el mismo número. */
+
     fun discardSelected() = playerDiscard(_selected.toSet())
 
     fun playerDiscard(indices: Set<Int>) {
@@ -69,7 +69,7 @@ class Duel(
         roundsUsed++
     }
 
-    /** Acción del botón "Duelo": cierra el duelo y compara las manos. */
+
     fun fight(): DuelOutcome {
         require(!isFinished) { "El duelo ya terminó" }
         isFinished = true
