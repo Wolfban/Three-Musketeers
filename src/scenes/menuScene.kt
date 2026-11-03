@@ -6,6 +6,7 @@ import korlibs.image.format.*
 import korlibs.io.file.std.*
 import korlibs.korge.input.*
 import korlibs.korge.scene.*
+import korlibs.korge.service.storage.*
 import korlibs.korge.tween.*
 import korlibs.korge.view.*
 import korlibs.korge.view.animation.*
@@ -49,7 +50,7 @@ class MenuScene : Scene() {
 
         val loadingCard = resourcesVfs[LOADING_CARD].readBitmap()
 
-        fun play() {
+        fun play(tutorial: Boolean) {
             if (leaving) return
             leaving = true
             views.launch {
@@ -72,7 +73,7 @@ class MenuScene : Scene() {
                     elapsed += dt.inWholeMilliseconds / 1000.0
                     scaleX = abs(cos(elapsed * LOADING_SPEED)) * LOADING_CARD_SCALE
                 }
-                sceneContainer.changeTo { DuelScene() }
+                sceneContainer.changeTo { DuelScene(tutorial) }
                 loader.removeFromParent()
                 black.tween(black::alpha[0.0], time = 1.0.seconds)
                 black.removeFromParent()
@@ -80,7 +81,7 @@ class MenuScene : Scene() {
         }
 
         val options = listOf<Pair<String, () -> Unit>>(
-            "Jugar" to ::play,
+            "Jugar" to { play(views.storage.getOrNull(TUTORIAL_DONE_KEY) == null) },
             "Mazos" to {},
             "Salir" to { views.gameWindow.close() }
         )
@@ -131,6 +132,8 @@ class MenuScene : Scene() {
             down(Key.DOWN) { select((selected + 1) % rows.size) }
             down(Key.ENTER, Key.RETURN, Key.SPACE) { options[selected].second() }
         }
+
+        plate("Tutorial", 836, 500).onClick { play(true) }
 
         select(0)
     }

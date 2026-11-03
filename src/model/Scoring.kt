@@ -31,6 +31,9 @@ object Scoring {
         HandCategory.ROYAL_FLUSH to Rule (150, 10)
     )
 
+    fun baseChipsOf(category: HandCategory): Int = rules.getValue(category).baseChips
+    fun multiplierOf(category: HandCategory): Int = rules.getValue(category).multiplier
+
     fun chipsOf(card: Card): Int = when (card.rank) {
         Rank.ACE -> 11
         Rank.JACK, Rank.QUEEN, Rank.KING, Rank.TEN -> 10
