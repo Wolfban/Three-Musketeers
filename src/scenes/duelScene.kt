@@ -10,10 +10,13 @@ import korlibs.korge.input.*
 import korlibs.korge.scene.*
 import korlibs.korge.tween.*
 import korlibs.korge.view.*
+import korlibs.korge.service.storage.*
 import korlibs.korge.view.animation.*
+import korlibs.math.geom.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import model.*
+import kotlin.random.Random
 import kotlin.time.Duration.Companion.seconds
 
 private const val CARD_W = 63
@@ -75,10 +78,10 @@ private class FightResult(
     val enemyTotal: Int
 )
 
-class DuelScene : Scene() {
+class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
 
     override suspend fun SContainer.sceneInit() {
-        var duel = Duel()
+        var duel = if (tutorialMode) Duel(Deck(Random(TUTORIAL_SEED))) else Duel()
         var result: FightResult? = null
         var showOverlay = false
 
@@ -146,7 +149,7 @@ class DuelScene : Scene() {
             val layer = sceneArt.frames.first().layerData.first { it.layer.name == name }
             layer.bitmap.sliceWithSize(BUTTON_ART_X - layer.targetX, artY - layer.targetY, BUTTON_ART_W, BUTTON_ART_H).extract()
         }
-
+        git add src/scenes/duelTutorial.kt src/scenes/duelScene.kt src/scenes/menuScene.kt src/model/Scoring.kt
         val panelArt = sceneArt.frames.first().layerData.first { it.layer.name == "Barra Lateral" }.bitmap
         val sidebar = container()
 
@@ -156,7 +159,20 @@ class DuelScene : Scene() {
         val playerLayer = container()
         val sideLayer = container()
         val overlayLayer = container()
+        val tutorialLayer = container()
+        val handsLayer = container()
         val confirmLayer = container()
+        var tut: DuelTutorial? = null
+        val tutorialTargets = if (!tutorialMode) emptySet() else {
+            val scoring = duel.playerScore().scoringCards
+            duel.playerHand.indices.filter { duel.playerHand[it] !in scoring }
+                .sortedBy { duel.playerHand[it].rank.value }.take(3).toSet()
+        }
+
+        fun toggleHands() {
+            if (handsLayer.numChildren > 0) handsLayer.removeChildren()
+            else handsLayer.handsTable(panelArt, views.actualVirtualBounds) { handsLayer.removeChildren() }
+        }
         val fadeLayer = container()
 
         var sidebarHeight = -1
@@ -218,11 +234,13 @@ class DuelScene : Scene() {
         keys {
             down(Key.ESCAPE, Key.BACK) {
                 when {
+                    handsLayer.numChildren > 0 -> handsLayer.removeChildren()
                     confirmLayer.numChildren > 0 -> closeConfirm()
                     duel.isFinished -> goToMenu()
                     else -> openConfirm()
                 }
             }
+            down(Key.H) { toggleHands() }
         }
 
 
@@ -263,8 +281,11 @@ class DuelScene : Scene() {
                     selected,
                     cardImages
                 ) {
-                    duel.toggleSelect(i)
-                    redraw()
+                    if (tut?.allows(TutorialWait.SELECT) != false) {
+                        duel.toggleSelect(i)
+                        redraw()
+                        if (tut?.waiting(TutorialWait.SELECT) == true && duel.selected == tutorialTargets) tut?.advance()
+                    }
                 }
 
             }
@@ -290,21 +311,31 @@ class DuelScene : Scene() {
             }
 
             sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard) {
-                duel.discardSelected()
-                redraw()
-            }
-            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished) {
-                val fought = fight(duel)
-                result = fought
-                if (fought.outcome == DuelOutcome.LOSE) {
+                if (tut?.allows(TutorialWait.DISCARD) != false) {
+                    duel.discardSelected()
                     redraw()
-                    this@DuelScene.launch { fadeToDeath() }
-                } else {
-                    showOverlay = true
-                    redraw()
+                    if (tut?.waiting(TutorialWait.DISCARD) == true) tut?.advance()
                 }
             }
+            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished) {
+                if (tut?.allows(TutorialWait.FIGHT) != false) {
+                    val fought = fight(duel)
+                    result = fought
+                    if (tut?.waiting(TutorialWait.FIGHT) == true) {
+                        redraw()
+                        tut?.advance()
+                    } else if (fought.outcome == DuelOutcome.LOSE) {
+                        redraw()
+                        this@DuelScene.launch { fadeToDeath() }
+                    } else {
+                        showOverlay = true
+                        redraw()
+                    }
+                }
+            }
+            enemyLayer.plate("Manos (H)", 830, 504).onClick { toggleHands() }
             sideLayer.artButton("Nueva\npartida", buttonArt.getValue("Nueva Partida"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Nueva Partida") * 3, true) {
+                if (tut?.active == true) return@artButton
                 duel = Duel()
                 result = null
                 showOverlay = false
@@ -400,7 +431,63 @@ class DuelScene : Scene() {
             fadeLayer.removeChildren()
         }
 
+        if (tutorialMode) {
+            val enemyRect = Rectangle(ENEMY_X - 8, ENEMY_Y - 8, 6 * ENEMY_STEP + ENEMY_CARD_W + 16, ENEMY_CARD_H + 46)
+            val handRect = Rectangle(CARDS_X - 8, PLAYER_Y - 28, 6 * CARD_STEP + CARD_W + 16, CARD_H + 36)
+            val scoreRect = Rectangle(CARDS_X - 14, PLAYER_Y + CARD_H + 2, 440, 30)
+            val handsRect = Rectangle(820, 496, 130, 34)
+            fun objectiveRect() = Rectangle(views.actualVirtualBounds.left + SIDE_X - 10, 24, 150, 74)
+            fun cardRect(i: Int) = Rectangle(CARDS_X + i * CARD_STEP - 6, PLAYER_Y - 26, CARD_W + 12, CARD_H + 32)
+            fun buttonRect(name: String) = Rectangle(
+                views.actualVirtualBounds.left + SIDE_BUTTON_X - 4, SIDE_BUTTONS.getValue(name) * 3 - 4,
+                BUTTON_ART_W * 3 + 8, BUTTON_ART_H * 3 + 8
+            )
+
+            tut = DuelTutorial(tutorialLayer, panelArt, { views.actualVirtualBounds }, { i ->
+                when (i) {
+                    0 -> TutorialStep(
+                        "Este es tu rival. Su mejor mano vale ${duel.targetScore}\nfichas: ese es el objetivo que debes superar.",
+                        TutorialWait.NEXT, false, listOf(enemyRect, objectiveRect())
+                    )
+                    1 -> TutorialStep(
+                        "Estas son tus 7 cartas. Solo cuentan las 5\nque forman tu mejor mano de póker.\nLas cartas verdes son las que suman.",
+                        TutorialWait.NEXT, true, listOf(handRect)
+                    )
+                    2 -> TutorialStep(
+                        "Puntaje = (fichas de la mano + fichas de las\ncartas) x multiplicador. Con ${duel.playerScore().total} no le ganas\nal rival: hay que mejorar la mano.",
+                        TutorialWait.NEXT, true, listOf(scoreRect)
+                    )
+                    3 -> TutorialStep(
+                        "Toca las 3 cartas señaladas para marcarlas.\nLas cartas marcadas se cambian por nuevas.",
+                        TutorialWait.SELECT, true, tutorialTargets.map { cardRect(it) }
+                    )
+                    4 -> TutorialStep(
+                        "Pulsa Descartar. Tienes ${Duel.MAX_ROUNDS} descartes de\nhasta ${Duel.MAX_DISCARD_PER_ROUND} cartas cada uno.",
+                        TutorialWait.DISCARD, true, listOf(buttonRect("Descartar"))
+                    )
+                    5 -> TutorialStep(
+                        "¡Formaste un ${categoryName(duel.playerScore().category).lowercase()}! Tu mano vale\n${duel.playerScore().total} fichas y supera al rival.",
+                        TutorialWait.NEXT, true, listOf(handRect, scoreRect)
+                    )
+                    6 -> TutorialStep(
+                        "Pulsa ¡Duelo! para enfrentarte al rival.\nGana quien tenga más puntos.",
+                        TutorialWait.FIGHT, true, listOf(buttonRect("Duelo"))
+                    )
+                    7 -> TutorialStep(
+                        "¡Bien hecho, mosquetero! Pulsa H o toca\n\"Manos\" para ver la tabla de manos cuando\nquieras.",
+                        TutorialWait.NEXT, true, listOf(handsRect)
+                    )
+                    else -> null
+                }
+            }) {
+                views.storage[TUTORIAL_DONE_KEY] = "1"
+                if (duel.isFinished && result != null) showOverlay = true
+                redraw()
+            }
+        }
+
         redraw()
+        tut?.render()
     }
 }
 
@@ -514,7 +601,7 @@ private fun Container.artButton(
     if (enabled) onClick { onTap() }
 }
 
-private fun Container.framePanel(art: Bitmap, artW: Int, artH: Int): Container = container {
+internal fun Container.framePanel(art: Bitmap, artW: Int, artH: Int): Container = container {
     val cols = listOf(Triple(0, PANEL_CAP, 0), Triple(art.width / 2, 1, PANEL_CAP), Triple(art.width - PANEL_CAP, PANEL_CAP, artW - PANEL_CAP))
     val rows = listOf(Triple(0, PANEL_CAP, 0), Triple(art.height / 2, 1, PANEL_CAP), Triple(art.height - PANEL_CAP, PANEL_CAP, artH - PANEL_CAP))
     for ((sx, sw, dx) in cols) for ((sy, sh, dy) in rows) {
@@ -543,7 +630,7 @@ internal fun Container.pixelText(
     block()
 }
 
-private fun Container.plate(label: String, x: Int, y: Int, color: RGBA = Colors.WHITE, size: Int = 16): Container = container {
+internal fun Container.plate(label: String, x: Int, y: Int, color: RGBA = Colors.WHITE, size: Int = 16): Container = container {
     position(x, y)
     val t = Text(label, size, color, pixelFontOf(size)).apply { smoothing = false }
     solidRect(t.width + 12, t.height + 6, RGBA(0, 0, 0, 160)).position(-6, -3)
