@@ -4,17 +4,29 @@ enum class DuelOutcome { WIN, LOSE, DRAW }
 
 class Duel(
     private val deck: Deck = Deck(),
-    private val enemyMinCategory: HandCategory = HandCategory.ONE_PAIR
+    private val enemyMinCategory: HandCategory = HandCategory.ONE_PAIR,
+    val maxRounds: Int = MAX_ROUNDS,
+    val debuff: Debuff = Debuff.NONE,
+    private val enemyMaxCategory: HandCategory = HandCategory.ROYAL_FLUSH,
+    val targetBonusPercent: Int = 0
 ) {
-
     companion object {
         const val HAND_SIZE = 7
         const val MAX_DISCARD_PER_ROUND = 5
         const val MAX_ROUNDS = 3
     }
 
-    // El rival se reparte primero y no cambia durante el duelo
+    init {
+        require(enemyMinCategory <= enemyMaxCategory) { "El rango de mano del rival está al revés" }
+        require(targetBonusPercent >= 0) { "El bono del objetivo no puede ser negativo" }
+    }
+
+
     val enemyHand: List<Card> = dealEnemyHand()
+    val enemyScore: ScoreBreakdown = Scoring.score(enemyHand)
+    val targetScore: Int
+        get() = enemyScore.total * (100 + targetBonusPercent) / 100
+
     val playerHand: MutableList<Card> = deck.draw(HAND_SIZE).toMutableList()
     val discardPile: MutableList<Card> = mutableListOf()
 
@@ -23,24 +35,22 @@ class Duel(
 
     var roundsUsed = 0
         private set
-
     var isFinished = false
         private set
 
-    val roundsLeft: Int get() = MAX_ROUNDS - roundsUsed
-
+    val roundsLeft: Int get() = maxRounds - roundsUsed
 
     val canDiscard: Boolean get() = !isFinished && roundsLeft > 0 && _selected.isNotEmpty()
 
-    // Re-baraja y reparte hasta que el rival tenga al menos la categoría mínima.
-    // Las cartas rechazadas se devuelven porque el mazo se reinicia completo cada intento.
     private fun dealEnemyHand(): List<Card> {
         while (true) {
             deck.reset()
             val hand = deck.draw(HAND_SIZE)
-            if (PokerEvaluator.evaluateBest(hand).category >= enemyMinCategory) return hand
+            val category = PokerEvaluator.evaluateBest(hand).category
+            if (category >= enemyMinCategory && category <= enemyMaxCategory) return hand
         }
     }
+
     fun toggleSelect(index: Int): Boolean {
         require(index in playerHand.indices) { "Índice de carta inválido" }
         if (isFinished) return false
@@ -73,17 +83,15 @@ class Duel(
         isFinished = true
         _selected.clear()
         val player = playerScore().total
-        val enemy = enemyScore.total
-        return if (player > enemy) DuelOutcome.WIN else DuelOutcome.LOSE
-
-
-
+        val target = targetScore
+        return when {
+            player > target -> DuelOutcome.WIN
+            player < target -> DuelOutcome.LOSE
+            else -> DuelOutcome.DRAW
         }
+    }
 
-
+    fun playerScore(): ScoreBreakdown = Scoring.score(playerHand, debuff)
     fun playerResult() = PokerEvaluator.evaluateBest(playerHand)
     fun enemyResult() = PokerEvaluator.evaluateBest(enemyHand)
-    val enemyScore: ScoreBreakdown = Scoring.score(enemyHand)
-    fun playerScore(): ScoreBreakdown = Scoring.score(playerHand)
-    val targetScore: Int get() = enemyScore.total
 }

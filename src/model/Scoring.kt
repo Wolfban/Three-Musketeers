@@ -40,27 +40,22 @@ object Scoring {
         else -> card.rank.value
     }
 
-    fun score(cards: List<Card>): ScoreBreakdown {
+    fun score(cards: List<Card>, debuff: Debuff = Debuff.NONE): ScoreBreakdown {
         require(cards.size >= 5) { "Se necesitan al menos 5 cartas" }
         return Combinations.of(cards, 5)
-            .map { scoreFive(it) }
+            .map { scoreFive(it, debuff) }
             .maxWith(compareBy<ScoreBreakdown> { it.total }.thenBy { it.category })
     }
 
-    private fun scoreFive(cards: List<Card>): ScoreBreakdown {
+    private fun scoreFive(cards: List<Card>, debuff: Debuff): ScoreBreakdown {
         val category = PokerEvaluator.evaluate(cards).category
         val scoring = scoringCards(cards, category)
         val rule = rules.getValue(category)
-        return ScoreBreakdown(
-            category = category,
-            baseChips = rule.baseChips,
-            scoringCards = scoring,
-            cardChips = scoring.sumOf { chipsOf(it) },
-            multiplier = rule.multiplier
-        )
+        val chips = scoring.filter { !debuff.affects(it) }.sumOf { chipsOf(it) }
+        return ScoreBreakdown(category, rule.baseChips, scoring, chips, rule.multiplier)
     }
 
-    // Solo puntúan las cartas que forman la combinación
+
     private fun scoringCards(cards: List<Card>, category: HandCategory): List<Card> {
         val groups = cards.groupBy { it.rank }.values
         return when (category) {

@@ -54,6 +54,9 @@ private const val PLAYER_Y = 400
 
 private val RIVALS = listOf("Mosquetero 1", "Cobrador de impuestos", "Princesa incognita")
 
+private val BOSS_RIVALS = listOf("Princesa incognita")
+private val NPC_RIVALS = RIVALS.filter { it !in BOSS_RIVALS }
+
 private val DEATH_MOTTOS = listOf(
     "Todos para uno y nada para ti",
     "Touché",
@@ -65,23 +68,43 @@ private val DEATH_MOTTOS = listOf(
 private lateinit var pixelFont: TtfFont
 
 internal suspend fun loadPixelFont() {
-    if (!::pixelFont.isInitialized) pixelFont = resourcesVfs["PixelifySans.ttf"].readTtfFont()
+    if (!::pixelFont.isInitialized) pixelFont = resourcesVfs["PixeloidSans.ttf"].readTtfFont()
 }
 
 
 private class FightResult(
     val outcome: DuelOutcome,
+    val event: RunEvent,
     val title: String,
     val scores: String,
     val note: String,
+    val runLine: String,
     val playerTotal: Int,
     val enemyTotal: Int
-)
+) {
 
-class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
+    val isDefeat: Boolean
+        get() = event == RunEvent.RUN_OVER
+}
+
+class DuelScene(
+    private val tutorialMode: Boolean = false,
+    private val resume: Boolean = false
+) : Scene() {
 
     override suspend fun SContainer.sceneInit() {
-        var duel = if (tutorialMode) Duel(Deck(Random(TUTORIAL_SEED))) else Duel()
+
+        val saved = if (resume && !tutorialMode) views.loadSavedRun() else null
+
+
+        var nextSeed: Long = saved?.seed ?: if (tutorialMode) TUTORIAL_SEED.toLong() else Random.nextLong()
+
+        var bossSeed: Long = saved?.bossSeed ?: Random.nextLong()
+        val gameRun = Run(saved?.cycle ?: 1, saved?.phase ?: 1, bossSeed) { Deck(Random(nextSeed)) }
+        var duel = gameRun.duel
+        views.saveRun(gameRun.cycle, gameRun.phase, nextSeed, bossSeed)
+
+        val playerLabel = views.loadPlayerName() ?: "Tú"
         var result: FightResult? = null
         var showOverlay = false
 
@@ -138,8 +161,11 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
             position(tavernX * ART_SCALE, (tavernY + tableTop) * ART_SCALE)
         }
 
+        var rivalName = ""
         fun pickRival() {
-            val rival = RIVALS.random()
+            val pool = if (gameRun.encounter.isBoss) BOSS_RIVALS else NPC_RIVALS
+            val rival = pool.random()
+            rivalName = rival
             RIVALS.forEach { background.getLayer(it)?.visible = it == rival }
         }
         pickRival()
@@ -149,7 +175,7 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
             val layer = sceneArt.frames.first().layerData.first { it.layer.name == name }
             layer.bitmap.sliceWithSize(BUTTON_ART_X - layer.targetX, artY - layer.targetY, BUTTON_ART_W, BUTTON_ART_H).extract()
         }
-        git add src/scenes/duelTutorial.kt src/scenes/duelScene.kt src/scenes/menuScene.kt src/model/Scoring.kt
+
         val panelArt = sceneArt.frames.first().layerData.first { it.layer.name == "Barra Lateral" }.bitmap
         val sidebar = container()
 
@@ -217,7 +243,9 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
             confirmLayer.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 170)).position(screen.x, screen.y).onClick { }
             confirmLayer.framePanel(panelArt, CONFIRM_PANEL_ART_W, CONFIRM_PANEL_ART_H).position(240, 150)
             confirmLayer.pixelText("¿Salir al menú?", 33) { position((960 - width.toInt()) / 2, 180) }
-            confirmLayer.pixelText("Se perderá la partida actual.", 16) { position((960 - width.toInt()) / 2, 230) }
+            confirmLayer.pixelText(
+                if (duel.isFinished) "Tu avance queda guardado." else "Al volver, la fase empieza de nuevo.", 16
+            ) { position((960 - width.toInt()) / 2, 230) }
             confirmLayer.artButton(
                 "Salir", buttonArt.getValue("Descartar"), 276, 282, true,
                 artWidth = DEATH_BUTTON_ART_W, labelSize = 22
@@ -251,6 +279,35 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
             overlayLayer.removeChildren()
 
 
+            val continueRun: () -> Unit = {
+                val finished = result
+                if (finished != null && finished.event != RunEvent.RUN_OVER) {
+                    gameRun.advance()
+                } else {
+                    nextSeed = Random.nextLong()
+                    bossSeed = Random.nextLong()
+                    gameRun.restart(bossSeed)
+                    views.saveRun(gameRun.cycle, gameRun.phase, nextSeed, bossSeed)
+                }
+                duel = gameRun.duel
+                result = null
+                showOverlay = false
+                pickRival()
+                redraw()
+            }
+
+            // Ciclo, fase y rival
+            val enc = gameRun.encounter
+            val info = buildString {
+                append("Ciclo ${gameRun.cycle} - Fase ${gameRun.phase}/${Difficulty.PHASES_PER_CYCLE}")
+                if (enc.isBoss) append(" - JEFE")
+                append("\n$rivalName")
+                enc.bossRule?.let { append("\n${bossRuleText(it, duel)}") }
+                if (gameRun.isEndless) append("\nSin fin: objetivo +${enc.targetBonusPercent}%")
+            }
+            enemyLayer.plate(info, TABLE_X + 12, 12, color = if (enc.isBoss) Colors["#ff8a80"] else Colors.WHITE)
+
+
             val enemy = duel.enemyScore
             duel.enemyHand.forEachIndexed { i, card ->
                 enemyLayer.cardView(
@@ -272,14 +329,16 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
             val beating = player.total > duel.targetScore
             duel.playerHand.forEachIndexed { i, card ->
                 val selected = i in duel.selected
+                val debuffed = duel.debuff.affects(card)   // carta anulada por el jefe
 
                 playerLayer.cardView(
                     card,
                     CARDS_X + i * CARD_STEP,
                     if (selected) PLAYER_Y - 20 else PLAYER_Y,
-                    card in player.scoringCards,
+                    card in player.scoringCards && !debuffed,
                     selected,
-                    cardImages
+                    cardImages,
+                    debuffed = debuffed
                 ) {
                     if (tut?.allows(TutorialWait.SELECT) != false) {
                         duel.toggleSelect(i)
@@ -290,7 +349,7 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
 
             }
             playerLayer.plate(
-                "Tú - ${scoreText(player)}", CARDS_X, PLAYER_Y + CARD_H + 8,
+                "$playerLabel - ${scoreText(player)}", CARDS_X, PLAYER_Y + CARD_H + 8,
                 color = if (beating) Colors["#81c784"] else Colors.WHITE
             )
 
@@ -303,7 +362,7 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
 
             val r = result
             if (r != null) {
-                sideLayer.pixelText(r.title, 22) { position(SIDE_X, 145) }
+                sideLayer.pixelText(r.title, if (r.title.length > 10) 16 else 22) { position(SIDE_X, 145) }
                 sideLayer.pixelText("Tú: ${r.playerTotal}\nRival: ${r.enemyTotal}", 16) { position(SIDE_X, 177) }
             } else {
                 sideLayer.pixelText("Verde:\nsuman", 16) { position(SIDE_X, 145) }
@@ -319,12 +378,31 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
             }
             sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished) {
                 if (tut?.allows(TutorialWait.FIGHT) != false) {
-                    val fought = fight(duel)
+                    val fought = fight(duel, gameRun)
+
+                    views.recordBestRun(
+                        RunStats.encountersWon(gameRun.cycle, gameRun.phase, fought.event != RunEvent.RUN_OVER)
+                    )
+
+                    if (fought.event == RunEvent.RUN_OVER) {
+                        views.clearSavedRun()
+                    } else {
+                        if (fought.event == RunEvent.RUN_WON) views.recordRunWon()
+                        val bossCleared = fought.event == RunEvent.CYCLE_CLEARED || fought.event == RunEvent.RUN_WON
+                        nextSeed = Random.nextLong()
+                        views.saveRun(
+                            if (bossCleared) gameRun.cycle + 1 else gameRun.cycle,
+                            if (bossCleared) 1 else gameRun.phase + 1,
+                            nextSeed,
+                            bossSeed
+                        )
+                    }
+
                     result = fought
                     if (tut?.waiting(TutorialWait.FIGHT) == true) {
                         redraw()
                         tut?.advance()
-                    } else if (fought.outcome == DuelOutcome.LOSE) {
+                    } else if (fought.isDefeat) {
                         redraw()
                         this@DuelScene.launch { fadeToDeath() }
                     } else {
@@ -334,34 +412,29 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
                 }
             }
             enemyLayer.plate("Manos (H)", 830, 504).onClick { toggleHands() }
-            sideLayer.artButton("Nueva\npartida", buttonArt.getValue("Nueva Partida"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Nueva Partida") * 3, true) {
+            val sideLabel = when (r?.event) {
+                RunEvent.NEXT_PHASE -> "Siguiente\nfase"
+                RunEvent.CYCLE_CLEARED -> "Siguiente\nciclo"
+                RunEvent.RUN_WON -> "Modo\nsin fin"
+                else -> "Nueva\nrun"
+            }
+            sideLayer.artButton(sideLabel, buttonArt.getValue("Nueva Partida"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Nueva Partida") * 3, true) {
                 if (tut?.active == true) return@artButton
-                duel = Duel()
-                result = null
-                showOverlay = false
-                pickRival()
-                redraw()
+                continueRun()
             }
 
 
             if (r != null && showOverlay) {
                 val screen = views.actualVirtualBounds
                 val dim = overlayLayer.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 170)).position(screen.x, screen.y)
-                dim.onClick { }   // captura los toques para que no lleguen a lo que está debajo
+                dim.onClick { }
 
-                val playAgain = {
-                    duel = Duel()
-                    result = null
-                    showOverlay = false
-                    pickRival()
-                    redraw()
-                }
                 val showHands = {
                     showOverlay = false
                     redraw()
                 }
 
-                if (r.outcome == DuelOutcome.LOSE) {
+                if (r.isDefeat) {
                     overlayLayer.imageDataView(deathArt, playing = true, smoothing = false) {
                         scale(ART_SCALE)
                         position(
@@ -371,14 +444,17 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
                     }
                     overlayLayer.pixelText(r.title, 44) { position(501, 40) }
                     overlayLayer.plate(r.scores, 507, 104, size = 22)
+
+                    if (r.runLine.isNotEmpty()) overlayLayer.plate(r.runLine, 507, 234)
                     if (r.note.isNotEmpty()) overlayLayer.plate(r.note, 507, 321)
                     overlayLayer.artButton(
                         "Menú", buttonArt.getValue("Descartar"), 711, 231, true,
                         artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = ::goToMenu
                     )
                     overlayLayer.artButton(
-                        "Jugar de nuevo", buttonArt.getValue("Duelo"), 501, 147, true,
-                        artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = playAgain
+                        "Nueva run",
+                        buttonArt.getValue("Duelo"), 501, 147, true,
+                        artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = continueRun
                     )
                     overlayLayer.artButton(
                         "Ver manos", buttonArt.getValue("Nueva Partida"), 711, 147, true,
@@ -390,13 +466,25 @@ class DuelScene(private val tutorialMode: Boolean = false) : Scene() {
 
                     overlayLayer.pixelText(r.title, 44) { position((960 - width.toInt()) / 2, 84) }
                     overlayLayer.pixelText(r.scores, 22) { position((960 - width.toInt()) / 2, 150) }
+                    if (r.runLine.isNotEmpty()) {
+                        overlayLayer.pixelText(r.runLine, 16) { position((960 - width.toInt()) / 2, 186) }
+                    }
                     if (r.note.isNotEmpty()) {
-                        overlayLayer.pixelText(r.note, 22) { position((960 - width.toInt()) / 2, 186) }
+                        overlayLayer.pixelText(r.note, 16) {
+                            position((960 - width.toInt()) / 2, if (r.runLine.isNotEmpty()) 212 else 186)
+                        }
                     }
 
+                    val primaryLabel = when (r.event) {
+                        RunEvent.NEXT_PHASE -> "Siguiente fase"
+                        RunEvent.CYCLE_CLEARED -> "Siguiente ciclo"
+                        RunEvent.RUN_WON -> "Modo sin fin"
+                        else -> "Continuar"
+                    }
                     overlayLayer.artButton(
-                        "Continuar", buttonArt.getValue("Duelo"), 276, 270, true,
-                        artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = playAgain
+                        primaryLabel, buttonArt.getValue("Duelo"), 276, 270, true,
+                        artWidth = DEATH_BUTTON_ART_W, labelSize = if (primaryLabel.length > 10) 18 else 22,
+                        onTap = continueRun
                     )
                     overlayLayer.artButton(
                         "Ver manos", buttonArt.getValue("Nueva Partida"), 486, 270, true,
@@ -503,6 +591,7 @@ private fun Container.cardView(
     w: Int = CARD_W,
     h: Int = CARD_H,
     textSize: Int = 33,
+    debuffed: Boolean = false,
     onTap: (() -> Unit)? = null
 ): Container = container {
 
@@ -550,7 +639,9 @@ private fun Container.cardView(
         }
     }
 
-    // Indicador visual de selección o puntuación
+    // Carta anulada por el jefe: se oscurece (sigue formando la mano, pero no suma fichas)
+    if (debuffed) solidRect(w, h, RGBA(0, 0, 0, 130))
+
     if (selected || scoring) {
         val borderColor = if (selected) {
             Colors["#ffe082"]
@@ -615,36 +706,56 @@ internal fun Container.framePanel(art: Bitmap, artW: Int, artH: Int): Container 
     scale(ART_SCALE)
 }
 
-private val pixelFonts =mutableMapOf<Int, BitmapFont>()
 
-private fun pixelFontOf(size: Int): BitmapFont = pixelFonts.getOrPut(size) {
-    pixelFont.toBitmapFont(size, CharacterSet.LATIN_ALL, mipmaps = false).also { font ->
+private const val FONT_SCALE = 1
+private const val FONT_GRID = 4
+private const val FONT_RASTER = 28
+
+internal fun fontSize(size: Int): Int =
+    ((size * FONT_SCALE / FONT_GRID + 0.5).toInt() * FONT_GRID).coerceAtLeast(8)
+
+private var rasterFont: BitmapFont? = null
+
+private fun pixelFontOf(): BitmapFont = rasterFont
+    ?: pixelFont.toBitmapFont(FONT_RASTER, CharacterSet.LATIN_ALL, mipmaps = false).also { font ->
         (font.baseBmp as Bitmap32).updateColors { if (it.a >= 128) Colors.WHITE else Colors.TRANSPARENT }
+        rasterFont = font
     }
-}
 
 internal fun Container.pixelText(
     label: String, size: Int = 16, color: RGBA = Colors.WHITE, block: Text.() -> Unit = {}
-): Text = text(label, size, color, pixelFontOf(size)) {
+): Text = text(label, fontSize(size), color, pixelFontOf()) {
     smoothing = false
     block()
 }
 
 internal fun Container.plate(label: String, x: Int, y: Int, color: RGBA = Colors.WHITE, size: Int = 16): Container = container {
     position(x, y)
-    val t = Text(label, size, color, pixelFontOf(size)).apply { smoothing = false }
+    val t = Text(label, fontSize(size), color, pixelFontOf()).apply { smoothing = false }
     solidRect(t.width + 12, t.height + 6, RGBA(0, 0, 0, 160)).position(-6, -3)
     addChild(t)
 }
 
-private fun fight(duel: Duel): FightResult {
+private fun bossRuleText(rule: BossRule, duel: Duel): String = when (rule) {
+    BossRule.FEWER_DISCARDS -> "Solo ${duel.maxRounds} descartes"
+    BossRule.NO_DIAMONDS -> "Los diamantes no suman fichas"
+    BossRule.NO_HEARTS -> "Los corazones no suman fichas"
+    BossRule.NO_CLUBS -> "Los tréboles no suman fichas"
+    BossRule.NO_SPADES -> "Las picas no suman fichas"
+    BossRule.NO_FACES -> "K, Q y J no suman fichas"
+}
+
+private fun fight(duel: Duel, gameRun: Run): FightResult {
     val outcome = duel.fight()
+    val event = gameRun.report(outcome)
     val p = duel.playerScore()
     val e = duel.enemyScore
-    val title = when (outcome) {
-        DuelOutcome.WIN -> "¡GANASTE!"
-        DuelOutcome.LOSE -> "PERDISTE"
-        DuelOutcome.DRAW -> "EMPATE"
+    val title = when {
+        event == RunEvent.RUN_WON -> "¡VICTORIA!"
+        event == RunEvent.CYCLE_CLEARED -> "¡JEFE VENCIDO!"
+        outcome == DuelOutcome.WIN -> "¡GANASTE!"
+        outcome == DuelOutcome.LOSE -> "PERDISTE"
+        else -> "EMPATE"
     }
     val note = when {
         outcome == DuelOutcome.WIN && p.category < e.category ->
@@ -653,5 +764,19 @@ private fun fight(duel: Duel): FightResult {
             "Tu mano es de mayor categoría,\npero las cartas del rival\nsumaron más fichas."
         else -> ""
     }
-    return FightResult(outcome, title, "Tú: ${p.total}   vs   Rival: ${e.total}", note, p.total, e.total)
+
+    val runLine = when (event) {
+        RunEvent.NEXT_PHASE ->
+            if (gameRun.phase + 1 == Difficulty.PHASES_PER_CYCLE) "Siguiente: ¡el JEFE!"
+            else "Siguiente: fase ${gameRun.phase + 1}/${Difficulty.PHASES_PER_CYCLE}"
+        RunEvent.CYCLE_CLEARED -> "¡Ciclo ${gameRun.cycle} completado! Sube la dificultad."
+        RunEvent.RUN_WON -> "Venciste a los ${Difficulty.CYCLES_TO_WIN} jefes.\nPuedes seguir en modo sin fin."
+
+        else -> (if (outcome == DuelOutcome.DRAW) "El empate cuenta\ncomo derrota.\n" else "") +
+            "Run terminada en\nciclo ${gameRun.cycle}, fase ${gameRun.phase}."
+    }
+
+    val target = duel.targetScore
+    val rivalLabel = if (duel.targetBonusPercent > 0) "Objetivo" else "Rival"
+    return FightResult(outcome, event, title, "Tú: ${p.total}   vs   $rivalLabel: $target", note, runLine, p.total, target)
 }
