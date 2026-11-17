@@ -16,6 +16,7 @@ import korlibs.math.geom.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import model.*
+import kotlin.math.sqrt
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.seconds
 
@@ -57,9 +58,15 @@ private val RIVALS = listOf("Mosquetero 1", "Cobrador de impuestos", "Princesa i
 private val BOSS_RIVALS = listOf("Princesa incognita")
 private val NPC_RIVALS = RIVALS.filter { it !in BOSS_RIVALS }
 
+private const val BOSS_FOCUS_W = 640
+private const val BOSS_FOCUS_H = 400
+private const val BOSS_FOCUS_RX = 58.0
+private const val BOSS_FOCUS_RY = 50.0
+private const val BOSS_FOCUS_FADE = 0.8
+private const val BOSS_FOCUS_MAX_ALPHA = 200
+
 private val DEATH_MOTTOS = listOf(
     "Todos para uno y nada para ti",
-    "Touché",
     "Sin honor, sin cartas, sin sombrero",
     "Adieu, mosquetero",
     "La partie est finie"
@@ -161,12 +168,23 @@ class DuelScene(
             position(tavernX * ART_SCALE, (tavernY + tableTop) * ART_SCALE)
         }
 
+        val bossFocus = image(bossFocusBitmap()) {
+            smoothing = true
+            scale(ART_SCALE)
+        }
+
         var rivalName = ""
         fun pickRival() {
             val pool = if (gameRun.encounter.isBoss) BOSS_RIVALS else NPC_RIVALS
             val rival = pool.random()
             rivalName = rival
             RIVALS.forEach { background.getLayer(it)?.visible = it == rival }
+            val rivalLayer = sceneArt.frames.first().layerData.first { it.layer.name == rival }
+            bossFocus.visible = gameRun.encounter.isBoss
+            bossFocus.position(
+                (rivalLayer.targetX + rivalLayer.width / 2.0 - BOSS_FOCUS_W / 2) * ART_SCALE,
+                (rivalLayer.targetY + rivalLayer.height / 2.0 - BOSS_FOCUS_H / 2) * ART_SCALE
+            )
         }
         pickRival()
 
@@ -197,7 +215,7 @@ class DuelScene(
 
         fun toggleHands() {
             if (handsLayer.numChildren > 0) handsLayer.removeChildren()
-            else handsLayer.handsTable(panelArt, views.actualVirtualBounds) { handsLayer.removeChildren() }
+            else handsLayer.handsTable(panelArt, cardImages, views.actualVirtualBounds) { handsLayer.removeChildren() }
         }
         val fadeLayer = container()
 
@@ -535,7 +553,7 @@ class DuelScene(
             }
             black.onClick { }
             val text = fadeLayer.container { alpha = 0.0 }
-            text.pixelText(r.title, 44) { position((960 - width.toInt()) / 2, 180) }
+            text.pixelText(if (r.event == RunEvent.NEXT_PHASE) "Touché" else r.title, 44) { position((960 - width.toInt()) / 2, 180) }
             text.pixelText(r.scores, 22) { position((960 - width.toInt()) / 2, 254) }
             text.pixelText(r.runLine, 22, Colors["#ffe08a"]) { position((960 - width.toInt()) / 2, 300) }
             black.tween(black::alpha[1.0], time = 1.0.seconds)
@@ -804,4 +822,15 @@ private fun fight(duel: Duel, gameRun: Run): FightResult {
     val target = duel.targetScore
     val rivalLabel = if (duel.targetBonusPercent > 0) "Objetivo" else "Rival"
     return FightResult(outcome, event, title, "Tú: ${p.total}   vs   $rivalLabel: $target", note, runLine, p.total, target)
+}
+
+private fun bossFocusBitmap(): Bitmap32 {
+    val bitmap = Bitmap32(BOSS_FOCUS_W, BOSS_FOCUS_H, premultiplied = false)
+    for (y in 0 until BOSS_FOCUS_H) for (x in 0 until BOSS_FOCUS_W) {
+        val dx = (x + 0.5 - BOSS_FOCUS_W / 2) / BOSS_FOCUS_RX
+        val dy = (y + 0.5 - BOSS_FOCUS_H / 2) / BOSS_FOCUS_RY
+        val t = ((sqrt(dx * dx + dy * dy) - 1) / BOSS_FOCUS_FADE).coerceIn(0.0, 1.0)
+        bitmap[x, y] = RGBA(0, 0, 0, (BOSS_FOCUS_MAX_ALPHA * t * t * (3 - 2 * t)).toInt())
+    }
+    return bitmap
 }
