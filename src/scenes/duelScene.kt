@@ -184,7 +184,7 @@ class DuelScene(
         val enemyLayer = container()
         val playerLayer = container()
         val sideLayer = container()
-        val overlayLayer = container()
+        val overlgit statusayLayer = container()
         val tutorialLayer = container()
         val handsLayer = container()
         val confirmLayer = container()
@@ -218,7 +218,7 @@ class DuelScene(
         lateinit var fadeToDeath: suspend () -> Unit
 
         var leaving = false
-        fun goToMenu() {
+        fun goToMenu(toShop: Boolean = false) {
             if (leaving) return
             leaving = true
             views.launch {
@@ -229,7 +229,7 @@ class DuelScene(
                 }
                 black.onClick { }
                 black.tween(black::alpha[1.0], time = 1.0.seconds)
-                sceneContainer.changeTo { MenuScene() }
+                if (toShop) sceneContainer.changeTo { ShopScene() } else sceneContainer.changeTo { MenuScene() }
                 black.tween(black::alpha[0.0], time = 1.0.seconds)
                 black.removeFromParent()
             }
@@ -279,9 +279,13 @@ class DuelScene(
             overlayLayer.removeChildren()
 
 
-            val continueRun: () -> Unit = {
+            val continueRun: () -> Unit = continueRun@{
                 val finished = result
                 if (finished != null && finished.event != RunEvent.RUN_OVER) {
+                    if (!tutorialMode) {
+                        goToMenu(toShop = true)
+                        return@continueRun
+                    }
                     gameRun.advance()
                 } else {
                     nextSeed = Random.nextLong()
@@ -449,7 +453,7 @@ class DuelScene(
                     if (r.note.isNotEmpty()) overlayLayer.plate(r.note, 507, 321)
                     overlayLayer.artButton(
                         "Menú", buttonArt.getValue("Descartar"), 711, 231, true,
-                        artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = ::goToMenu
+                        artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = { goToMenu() }
                     )
                     overlayLayer.artButton(
                         "Nueva run",
@@ -492,7 +496,7 @@ class DuelScene(
                     )
                     overlayLayer.artButton(
                         "Menú", buttonArt.getValue("Descartar"), 276, 354, true,
-                        artWidth = MENU_BUTTON_ART_W, labelSize = 22, onTap = ::goToMenu
+                        artWidth = MENU_BUTTON_ART_W, labelSize = 22, onTap = { goToMenu() }
                     )
                 }
             }
@@ -663,7 +667,7 @@ private fun Container.cardView(
 }
 
 
-private fun Container.artButton(
+internal fun Container.artButton(
     label: String, art: Bitmap, x: Int, y: Int, enabled: Boolean,
     artWidth: Int = art.width, labelSize: Int = 16, onTap: () -> Unit
 ): Container = container {
