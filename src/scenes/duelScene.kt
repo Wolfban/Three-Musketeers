@@ -184,7 +184,7 @@ class DuelScene(
         val enemyLayer = container()
         val playerLayer = container()
         val sideLayer = container()
-        val overlgit statusayLayer = container()
+        val overlayLayer = container()
         val tutorialLayer = container()
         val handsLayer = container()
         val confirmLayer = container()
@@ -216,6 +216,7 @@ class DuelScene(
         }
 
         lateinit var fadeToDeath: suspend () -> Unit
+        lateinit var fadeToShop: suspend (FightResult) -> Unit
 
         var leaving = false
         fun goToMenu(toShop: Boolean = false) {
@@ -409,9 +410,12 @@ class DuelScene(
                     } else if (fought.isDefeat) {
                         redraw()
                         this@DuelScene.launch { fadeToDeath() }
-                    } else {
+                    } else if (tutorialMode) {
                         showOverlay = true
                         redraw()
+                    } else {
+                        redraw()
+                        this@DuelScene.launch { fadeToShop(fought) }
                     }
                 }
             }
@@ -521,6 +525,23 @@ class DuelScene(
             redraw()
             black.tween(black::alpha[0.0], time = 1.0.seconds)
             fadeLayer.removeChildren()
+        }
+
+        fadeToShop = { r ->
+            val screen = views.actualVirtualBounds
+            val black = fadeLayer.solidRect(screen.width, screen.height, Colors.BLACK) {
+                position(screen.x, screen.y)
+                alpha = 0.0
+            }
+            black.onClick { }
+            val text = fadeLayer.container { alpha = 0.0 }
+            text.pixelText(r.title, 44) { position((960 - width.toInt()) / 2, 180) }
+            text.pixelText(r.scores, 22) { position((960 - width.toInt()) / 2, 254) }
+            text.pixelText(r.runLine, 22, Colors["#ffe08a"]) { position((960 - width.toInt()) / 2, 300) }
+            black.tween(black::alpha[1.0], time = 1.0.seconds)
+            text.tween(text::alpha[1.0], time = 0.8.seconds)
+            delay(2200)
+            goToMenu(toShop = true)
         }
 
         if (tutorialMode) {
