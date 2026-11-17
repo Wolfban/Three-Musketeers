@@ -240,7 +240,7 @@ class MenuScene : Scene() {
 
         val options = listOf<Pair<String, () -> Unit>>(
             "Jugar" to { startGame() },
-            "Mazos" to {},
+            "Colección" to {},
             "Salir" to { views.gameWindow.close() }
         )
 
