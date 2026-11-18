@@ -234,7 +234,7 @@ class DuelScene(
         }
 
         lateinit var fadeToDeath: suspend () -> Unit
-        lateinit var fadeToShop: suspend (FightResult) -> Unit
+        lateinit var fadeToVictory: suspend (FightResult) -> Unit
 
         var leaving = false
         fun goToMenu(toShop: Boolean = false) {
@@ -301,7 +301,7 @@ class DuelScene(
             val continueRun: () -> Unit = continueRun@{
                 val finished = result
                 if (finished != null && finished.event != RunEvent.RUN_OVER) {
-                    if (!tutorialMode) {
+                    if (!tutorialMode && finished.event != RunEvent.NEXT_PHASE) {
                         goToMenu(toShop = true)
                         return@continueRun
                     }
@@ -433,7 +433,7 @@ class DuelScene(
                         redraw()
                     } else {
                         redraw()
-                        this@DuelScene.launch { fadeToShop(fought) }
+                        this@DuelScene.launch { fadeToVictory(fought) }
                     }
                 }
             }
@@ -545,7 +545,7 @@ class DuelScene(
             fadeLayer.removeChildren()
         }
 
-        fadeToShop = { r ->
+        fadeToVictory = { r ->
             val screen = views.actualVirtualBounds
             val black = fadeLayer.solidRect(screen.width, screen.height, Colors.BLACK) {
                 position(screen.x, screen.y)
@@ -559,7 +559,18 @@ class DuelScene(
             black.tween(black::alpha[1.0], time = 1.0.seconds)
             text.tween(text::alpha[1.0], time = 0.8.seconds)
             delay(2200)
-            goToMenu(toShop = true)
+            if (r.event != RunEvent.NEXT_PHASE) {
+                goToMenu(toShop = true)
+            } else {
+                gameRun.advance()
+                duel = gameRun.duel
+                result = null
+                pickRival()
+                redraw()
+                text.tween(text::alpha[0.0], time = 0.8.seconds)
+                black.tween(black::alpha[0.0], time = 1.0.seconds)
+                fadeLayer.removeChildren()
+            }
         }
 
         if (tutorialMode) {
@@ -825,7 +836,7 @@ private fun fight(duel: Duel, gameRun: Run): FightResult {
 }
 
 private fun bossFocusBitmap(): Bitmap32 {
-    val bitmap = Bitmap32(BOSS_FOCUS_W, BOSS_FOCUS_H, premultiplied = false)
+    val bitmap = Bitmap32(BOSS_FOCUS_W, BOSS_FOCUS_H, premultiplied = true)
     for (y in 0 until BOSS_FOCUS_H) for (x in 0 until BOSS_FOCUS_W) {
         val dx = (x + 0.5 - BOSS_FOCUS_W / 2) / BOSS_FOCUS_RX
         val dy = (y + 0.5 - BOSS_FOCUS_H / 2) / BOSS_FOCUS_RY

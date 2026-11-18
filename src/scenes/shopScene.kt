@@ -16,11 +16,11 @@ import kotlin.time.Duration.Companion.seconds
 
 private const val SHOP_CHOICES = 3
 private const val SHOP_BOX_X = 48
-private const val SHOP_BOX_Y = 150
+private const val SHOP_BOX_Y = 120
 private const val SHOP_BOX_ART_W = 176
 private const val SHOP_BOX_ART_H = 78
-private const val SHOP_INFO_Y = 404
-private const val SHOP_INFO_ART_H = 42
+private const val SHOP_INFO_Y = 372
+private const val SHOP_INFO_ART_H = 50
 private const val SHOP_KEEPER = "Vendedor"
 private const val SHOP_KEEPER_ART_X = 300
 private const val SHOP_KEEPER_ART_BOTTOM = 160
@@ -31,11 +31,20 @@ private const val SHOP_BUTTON_Y = 444
 private const val CONFIRM_ART_W = 160
 private const val CONFIRM_ART_H = 70
 
-private class Joker(val name: String, val description: String)
+private const val JOKER_ART_SCALE = 1.25
 
-private val JOKERS = List(SHOP_CHOICES) { i ->
-    Joker("Comodín ${i + 1}", "Pronto habrá comodines de verdad aquí.")
-}
+private class Joker(val name: String, val file: String, val description: String)
+
+private val JOKERS = listOf(
+    Joker("Cambiapalos", "cambiapalos", "Cambia el palo de cualquier carta."),
+    Joker("Todos As", "todos_as", "Convierte cualquier carta en un as."),
+    Joker("Intercambio", "intercambio", "Roba una carta del rival y dale una tuya."),
+    Joker("Recuperar", "recuperar", "Recupera una carta de tu pila de descarte."),
+    Joker("Reyes Ases", "reyes_ases", "Los reyes cuentan como ases."),
+    Joker("Apuesta", "apuesta", "Una carta al azar de tu mano se convierte\nen un comodín al azar."),
+    Joker("Espejo", "espejo", "Vuelve a usar un comodín que ya usaste\nen esta partida."),
+    Joker("Futuro", "futuro", "Mira la próxima carta del mazo antes\nde decidir tu descarte.")
+)
 
 class ShopScene : Scene() {
 
@@ -54,7 +63,8 @@ class ShopScene : Scene() {
             it.setExtra("layers", SHOP_KEEPER)
         })
         val keeper = keeperArt.frames.first().layerData.first { it.layer.name == SHOP_KEEPER }
-        val icon = resourcesVfs["carta_reverso.png"].readBitmap()
+        val offer = JOKERS.shuffled().take(SHOP_CHOICES)
+        val jokerArt = offer.associateWith { resourcesVfs["comodines/${it.file}.ase"].readImageData(ASE.toProps()).mainBitmap }
 
         val artX = (views.virtualWidth - shopArt.width * ART_SCALE) / 2
         val artY = (views.virtualHeight - shopArt.height * ART_SCALE) / 2
@@ -75,12 +85,12 @@ class ShopScene : Scene() {
         val boxW = SHOP_BOX_ART_W * ART_SCALE.toInt()
         val boxH = SHOP_BOX_ART_H * ART_SCALE.toInt()
         framePanel(panelArt, SHOP_BOX_ART_W, SHOP_BOX_ART_H).position(SHOP_BOX_X, SHOP_BOX_Y)
-        pixelText("Elige un comodín", 22, Colors["#ffe08a"]) { position(SHOP_BOX_X + (boxW - width.toInt()) / 2, SHOP_BOX_Y + 14) }
+        pixelText("Elige un comodín", 22, Colors["#ffe08a"]) { position(SHOP_BOX_X + (boxW - width.toInt()) / 2, SHOP_BOX_Y + 22) }
 
         val cellW = (boxW - 60) / SHOP_CHOICES
-        val cellH = boxH - 84
+        val cellH = boxH - 90
         val cellsX = SHOP_BOX_X + 30
-        val cellsY = SHOP_BOX_Y + 48
+        val cellsY = SHOP_BOX_Y + 54
 
         framePanel(panelArt, SHOP_BOX_ART_W, SHOP_INFO_ART_H).position(SHOP_BOX_X, SHOP_INFO_Y)
         val info = container()
@@ -98,10 +108,10 @@ class ShopScene : Scene() {
 
         fun select(index: Int) {
             selected = index
-            val joker = JOKERS[index]
+            val joker = offer[index]
             info.removeChildren()
-            info.pixelText(joker.name, 22) { position(SHOP_BOX_X + 36, SHOP_INFO_Y + 22) }
-            info.pixelText(joker.description, 16) { position(SHOP_BOX_X + 36, SHOP_INFO_Y + 62) }
+            info.pixelText(joker.name, 22) { position(SHOP_BOX_X + 36, SHOP_INFO_Y + 26) }
+            info.pixelText(joker.description, 16) { position(SHOP_BOX_X + 36, SHOP_INFO_Y + 68) }
             val x = cellsX + index * cellW
             val c = Colors["#ffd54f"]
             glow.removeChildren()
@@ -132,7 +142,7 @@ class ShopScene : Scene() {
 
         fun choose() {
             if (dialog.numChildren > 0) return
-            val joker = JOKERS[selected]
+            val joker = offer[selected]
             val screen = views.actualVirtualBounds
             val buttonW = SHOP_BUTTON_ART_W * ART_SCALE.toInt()
             dialog.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 170)).position(screen.x, screen.y).onClick { }
@@ -148,13 +158,15 @@ class ShopScene : Scene() {
             )
         }
 
-        JOKERS.forEachIndexed { i, joker ->
+        offer.forEachIndexed { i, joker ->
             val x = cellsX + i * cellW
             val cell = container()
             cell.solidRect(cellW, cellH, Colors.TRANSPARENT).position(x, cellsY)
-            cell.image(icon) {
+            val art = jokerArt.getValue(joker)
+            cell.image(art) {
                 smoothing = false
-                position(x + (cellW - icon.width) / 2, cellsY + 4)
+                scale(JOKER_ART_SCALE)
+                position(x + (cellW - art.width * JOKER_ART_SCALE) / 2, cellsY + 4.0)
             }
             cell.pixelText(joker.name, 16) { position(x + (cellW - width.toInt()) / 2, cellsY + 122) }
             cell.onOver { if (dialog.numChildren == 0) select(i) }
