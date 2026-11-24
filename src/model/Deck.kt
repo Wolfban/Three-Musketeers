@@ -21,5 +21,6 @@ class Deck(private val random: Random = Random.Default) {
 
     fun draw(): Card = cards.removeFirst()
     fun draw(n: Int): List<Card> = List(n) { draw() }
+    fun peek(): Card = cards.first()
     val remaining: Int get() = cards.size
 }

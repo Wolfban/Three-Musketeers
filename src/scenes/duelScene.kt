@@ -102,6 +102,13 @@ class DuelScene(
         var bossSeed: Long = saved?.bossSeed ?: Random.nextLong()
         val gameRun = Run(saved?.cycle ?: 1, saved?.phase ?: 1, bossSeed) { Deck(Random(nextSeed)) }
         var duel = gameRun.duel
+        var revealedCard: Card? = null
+        var suitChangeMode = false
+        var suitChangeTarget: Int? = null
+        var aceChangeMode = false
+        aceChangeMode = false
+        var recoverDiscardMode = false
+
         views.saveRun(gameRun.cycle, gameRun.phase, nextSeed, bossSeed)
 
         val playerLabel = views.loadPlayerName() ?: "Tú"
@@ -328,7 +335,11 @@ class DuelScene(
             val player = duel.playerScore()
             val beating = player.total > duel.targetScore
             duel.playerHand.forEachIndexed { i, card ->
-                val selected = i in duel.selected
+                val selected = if (suitChangeMode) {
+                    suitChangeTarget == i
+                } else {
+                    i in duel.selected
+                }
                 val debuffed = duel.debuff.affects(card)   // carta anulada por el jefe
 
                 playerLayer.cardView(
@@ -340,10 +351,38 @@ class DuelScene(
                     cardImages,
                     debuffed = debuffed
                 ) {
-                    if (tut?.allows(TutorialWait.SELECT) != false) {
-                        duel.toggleSelect(i)
+                    if (recoverDiscardMode) {
+                        // Recuperar la última carta descartada
+                        if (duel.recoverLastDiscard(i)) {
+                            recoverDiscardMode = false
+                            redraw()
+                        }
+
+                    } else if (aceChangeMode) {
+                        // Convertir la carta seleccionada en As
+                        if (duel.convertToAce(i)) {
+                            aceChangeMode = false
+                            redraw()
+                        }
+
+                    } else if (suitChangeMode) {
+
+                        // Seleccionar carta para cambiar su palo
+                        suitChangeTarget = i
                         redraw()
-                        if (tut?.waiting(TutorialWait.SELECT) == true && duel.selected == tutorialTargets) tut?.advance()
+
+                    } else {
+                        // Selección normal para descartar
+                        if (tut?.allows(TutorialWait.SELECT) != false) {
+                            duel.toggleSelect(i)
+                            redraw()
+
+                            if (tut?.waiting(TutorialWait.SELECT) == true &&
+                                duel.selected == tutorialTargets
+                            ) {
+                                tut?.advance()
+                            }
+                        }
                     }
                 }
 
@@ -352,6 +391,67 @@ class DuelScene(
                 "$playerLabel - ${scoreText(player)}", CARDS_X, PLAYER_Y + CARD_H + 8,
                 color = if (beating) Colors["#81c784"] else Colors.WHITE
             )
+
+            val targetIndex = suitChangeTarget
+
+            if (suitChangeMode && targetIndex != null &&
+                targetIndex in duel.playerHand.indices
+            ) {
+                val targetCard = duel.playerHand[targetIndex]
+
+                playerLayer.pixelText("Elegir nuevo palo:", 16) {
+                    position(CARDS_X, 340)
+                }
+
+                val suitOptions = listOf(
+                    Suit.CLUBS to "Treboles",
+                    Suit.DIAMONDS to "Diamantes",
+                    Suit.HEARTS to "Corazones",
+                    Suit.SPADES to "Picas"
+                )
+
+                suitOptions.forEachIndexed { i, (suit, label) ->
+
+                    val validOption =
+                        suit != targetCard.suit &&
+                            targetCard.copy(suit = suit) !in duel.playerHand
+
+                    val optionText = playerLayer.pixelText(
+                        label,
+                        16,
+                        if (validOption) Colors["#ffe082"]
+                        else Colors["#777777"]
+                    ) {
+                        position(CARDS_X + i * 130, 363)
+                    }
+
+                    if (validOption) {
+                        optionText.onClick {
+                            if (duel.changeSuit(targetIndex, suit)) {
+                                suitChangeMode = false
+                                suitChangeTarget = null
+                                redraw()
+                            }
+                        }
+                    }
+                }
+            }
+
+            revealedCard?.let { card ->
+
+                playerLayer.pixelText("Proxima carta", 16) {
+                    position(835, 365)
+                }
+
+                playerLayer.cardView(
+                    card = card,
+                    x = 854,
+                    y = 395,
+                    scoring = false,
+                    selected = false,
+                    cardImages = cardImages
+                )
+            }
 
 
             sideLayer.pixelText("Objetivo", 16) { position(SIDE_X, 31) }
@@ -369,14 +469,151 @@ class DuelScene(
                 sideLayer.pixelText("Amarillo:\nmarcada", 16) { position(SIDE_X, 195) }
             }
 
-            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard) {
+            if (!tutorialMode && !duel.isFinished) {
+                val visionText = sideLayer.pixelText(
+                    if (duel.visionUsed) "Vision usada" else "Usar Vision",
+                    16,
+                    if (duel.visionUsed) Colors["#aaaaaa"] else Colors["#ffe082"]
+                ) {
+                    position(SIDE_X, 235)
+                }
+
+                if (!duel.visionUsed) {
+                    visionText.onClick {
+                        val nextCard = duel.useVision()
+
+                        if (nextCard != null) {
+                            revealedCard = nextCard
+                            redraw()
+                        }
+                    }
+                }
+            }
+
+            if (!tutorialMode && !duel.isFinished) {
+                val suitText = sideLayer.pixelText(
+                    when {
+                        duel.suitChangeUsed -> "Palo usado"
+                        suitChangeMode -> "Cancelar palo"
+                        else -> "Cambiar palo"
+                    },
+                    16,
+                    if (duel.suitChangeUsed) Colors["#aaaaaa"] else Colors["#ffe082"]
+                ) {
+                    position(SIDE_X, 505)
+                }
+
+                if (!duel.suitChangeUsed) {
+                    suitText.onClick {
+                        suitChangeMode = !suitChangeMode
+                        recoverDiscardMode = false
+                        suitChangeTarget = null
+
+                        // Desactivar El As Supremo
+                        aceChangeMode = false
+
+                        redraw()
+                    }
+                }
+            }
+
+            if (!tutorialMode && !duel.isFinished) {
+                val aceText = playerLayer.pixelText(
+                    when {
+                        duel.aceChangeUsed -> "As usado"
+                        aceChangeMode -> "Cancelar As"
+                        else -> "Convertir en As"
+                    },
+                    16,
+                    if (duel.aceChangeUsed) Colors["#aaaaaa"]
+                    else Colors["#ffe082"]
+                ) {
+                    position(710, 170)
+                }
+
+                if (!duel.aceChangeUsed) {
+                    aceText.onClick {
+                        aceChangeMode = !aceChangeMode
+                        recoverDiscardMode = false
+
+                        suitChangeMode = false
+                        suitChangeTarget = null
+
+                        redraw()
+                    }
+                }
+            }
+
+            if (!tutorialMode && !duel.isFinished) {
+
+                val canRecover = !duel.recoverDiscardUsed &&
+                    duel.discardPile.isNotEmpty()
+
+                val recoverText = playerLayer.pixelText(
+                    when {
+                        duel.recoverDiscardUsed -> "Descarte recuperado"
+                        recoverDiscardMode -> "Cancelar recuperar"
+                        else -> "Recuperar descarte"
+                    },
+                    16,
+                    if (canRecover) Colors["#ffe082"]
+                    else Colors["#aaaaaa"]
+                ) {
+                    position(710, 200)
+                }
+
+                if (canRecover) {
+                    recoverText.onClick {
+                        recoverDiscardMode = !recoverDiscardMode
+
+                        // Desactivar los otros modos
+                        aceChangeMode = false
+                        suitChangeMode = false
+                        suitChangeTarget = null
+
+                        redraw()
+                    }
+                }
+            }
+
+            if (!tutorialMode && !duel.isFinished) {
+
+                val kingText = playerLayer.pixelText(
+                    if (duel.kingsAsAcesActive) "Reyes activos"
+                    else "Reyes como Ases",
+                    16,
+                    if (duel.kingsAsAcesActive) Colors["#aaaaaa"]
+                    else Colors["#ffe082"]
+                ) {
+                    position(710, 140)
+                }
+
+                if (!duel.kingsAsAcesActive) {
+                    kingText.onClick {
+
+                        if (duel.activateKingsAsAces()) {
+
+                            // Desactivar otros modos de selección
+                            aceChangeMode = false
+                            suitChangeMode = false
+                            suitChangeTarget = null
+                            recoverDiscardMode = false
+
+                            redraw()
+                        }
+                    }
+                }
+            }
+
+            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard && !suitChangeMode && !aceChangeMode && !recoverDiscardMode) {
                 if (tut?.allows(TutorialWait.DISCARD) != false) {
                     duel.discardSelected()
+                    revealedCard = null
                     redraw()
                     if (tut?.waiting(TutorialWait.DISCARD) == true) tut?.advance()
                 }
             }
-            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished) {
+            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished && !suitChangeMode && !aceChangeMode && !recoverDiscardMode) {
                 if (tut?.allows(TutorialWait.FIGHT) != false) {
                     val fought = fight(duel, gameRun)
 

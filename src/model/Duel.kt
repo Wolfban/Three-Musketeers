@@ -38,6 +38,58 @@ class Duel(
     var isFinished = false
         private set
 
+    var visionUsed = false
+        private set
+
+    var suitChangeUsed = false
+        private set
+
+    var aceChangeUsed = false
+        private set
+
+    var recoverDiscardUsed = false
+        private set
+
+    fun recoverLastDiscard(index: Int): Boolean {
+        if (isFinished || recoverDiscardUsed) return false
+        if (discardPile.isEmpty()) return false
+        if (index !in playerHand.indices) return false
+
+        // Obtener la última carta descartada
+        val recoveredCard = discardPile.last()
+
+        // Evitar cartas duplicadas en la mano
+        if (recoveredCard in playerHand) return false
+
+        // Guardar la carta que vamos a reemplazar
+        val replacedCard = playerHand[index]
+
+        // Recuperar la última carta descartada
+        discardPile.removeAt(discardPile.lastIndex)
+
+        // Intercambiar las cartas
+        playerHand[index] = recoveredCard
+        discardPile.add(replacedCard)
+
+        // Limpiar selecciones anteriores
+        _selected.clear()
+
+        // Marcar el comodín como utilizado
+        recoverDiscardUsed = true
+
+        return true
+    }
+
+    var kingsAsAcesActive = false
+        private set
+
+    fun activateKingsAsAces(): Boolean {
+        if (isFinished || kingsAsAcesActive) return false
+
+        kingsAsAcesActive = true
+        return true
+    }
+
     val roundsLeft: Int get() = maxRounds - roundsUsed
 
     val canDiscard: Boolean get() = !isFinished && roundsLeft > 0 && _selected.isNotEmpty()
@@ -91,7 +143,68 @@ class Duel(
         }
     }
 
-    fun playerScore(): ScoreBreakdown = Scoring.score(playerHand, debuff)
+    fun peekNextCard(): Card? {
+        if (isFinished || deck.remaining == 0) return null
+        return deck.peek()
+    }
+
+    fun useVision(): Card? {
+        if (visionUsed || isFinished) return null
+
+        val nextCard = peekNextCard() ?: return null
+
+        visionUsed = true
+        return nextCard
+    }
+
+    fun changeSuit(index: Int, newSuit: Suit): Boolean {
+        if (isFinished || suitChangeUsed) return false
+        if (index !in playerHand.indices) return false
+
+        val originalCard = playerHand[index]
+
+        // No permitir cambiar al mismo palo
+        if (originalCard.suit == newSuit) return false
+
+        // Crear la carta con el nuevo palo
+        val newCard = originalCard.copy(suit = newSuit)
+
+        // Evitar cartas idénticas en la misma mano
+        if (newCard in playerHand) return false
+
+        // Reemplazar la carta original
+        playerHand[index] = newCard
+
+        // Consumir el comodín
+        suitChangeUsed = true
+
+        return true
+    }
+
+    fun convertToAce(index: Int): Boolean {
+        if (isFinished || aceChangeUsed) return false
+        if (index !in playerHand.indices) return false
+
+        val originalCard = playerHand[index]
+
+        if (originalCard.rank == Rank.ACE) return false
+
+        val newCard = originalCard.copy(rank = Rank.ACE)
+
+        if (newCard in playerHand) return false
+
+        playerHand[index] = newCard
+
+        aceChangeUsed = true
+
+        return true
+    }
+
+    fun playerScore(): ScoreBreakdown = Scoring.score(
+        playerHand,
+        debuff,
+        kingsAsAces = kingsAsAcesActive
+    )
     fun playerResult() = PokerEvaluator.evaluateBest(playerHand)
     fun enemyResult() = PokerEvaluator.evaluateBest(enemyHand)
 }
