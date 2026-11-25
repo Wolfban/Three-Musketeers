@@ -22,8 +22,10 @@ class Duel(
     }
 
 
-    val enemyHand: List<Card> = dealEnemyHand()
-    val enemyScore: ScoreBreakdown = Scoring.score(enemyHand)
+    val enemyHand: MutableList<Card> = dealEnemyHand().toMutableList()
+
+    val enemyScore: ScoreBreakdown
+        get() = Scoring.score(enemyHand)
     val targetScore: Int
         get() = enemyScore.total * (100 + targetBonusPercent) / 100
 
@@ -205,6 +207,53 @@ class Duel(
         debuff,
         kingsAsAces = kingsAsAcesActive
     )
+
+    var stealSwapUsed = false
+        private set
+
+    fun stealAndSwap(playerIndex: Int): Boolean {
+
+        if (isFinished || stealSwapUsed) return false
+        if (playerIndex !in playerHand.indices) return false
+
+        // Carta que el jugador entregará
+        val offeredCard = playerHand[playerIndex]
+
+        // Buscar cartas del rival que puedan intercambiarse
+        // sin crear duplicados dentro de ninguna mano
+        val validEnemyIndices = enemyHand.indices.filter { enemyIndex ->
+
+            val stolenCard = enemyHand[enemyIndex]
+
+            val validForPlayer = playerHand.indices.none {
+                it != playerIndex && playerHand[it] == stolenCard
+            }
+
+            val validForEnemy = enemyHand.indices.none {
+                it != enemyIndex && enemyHand[it] == offeredCard
+            }
+
+            validForPlayer && validForEnemy
+        }
+
+        if (validEnemyIndices.isEmpty()) return false
+
+        // Elegir aleatoriamente una carta válida del rival
+        val enemyIndex = validEnemyIndices.random()
+        val stolenCard = enemyHand[enemyIndex]
+
+        // Intercambiar las cartas
+        playerHand[playerIndex] = stolenCard
+        enemyHand[enemyIndex] = offeredCard
+
+        // Limpiar las selecciones
+        _selected.clear()
+
+        // Marcar el comodín como utilizado
+        stealSwapUsed = true
+
+        return true
+    }
     fun playerResult() = PokerEvaluator.evaluateBest(playerHand)
     fun enemyResult() = PokerEvaluator.evaluateBest(enemyHand)
 }

@@ -108,6 +108,7 @@ class DuelScene(
         var aceChangeMode = false
         aceChangeMode = false
         var recoverDiscardMode = false
+        var stealSwapMode = false
 
         views.saveRun(gameRun.cycle, gameRun.phase, nextSeed, bossSeed)
 
@@ -351,7 +352,15 @@ class DuelScene(
                     cardImages,
                     debuffed = debuffed
                 ) {
-                    if (recoverDiscardMode) {
+                    if (stealSwapMode) {
+                        // Robar una carta aleatoria del rival
+                        // e intercambiarla por la carta seleccionada
+                        if (duel.stealAndSwap(i)) {
+                            stealSwapMode = false
+                            redraw()
+                        }
+
+                    } else if (recoverDiscardMode) {
                         // Recuperar la última carta descartada
                         if (duel.recoverLastDiscard(i)) {
                             recoverDiscardMode = false
@@ -534,9 +543,11 @@ class DuelScene(
                 if (!duel.aceChangeUsed) {
                     aceText.onClick {
                         aceChangeMode = !aceChangeMode
+                        stealSwapMode = false
                         recoverDiscardMode = false
-
+                        stealSwapMode = false
                         suitChangeMode = false
+                        stealSwapMode = false
                         suitChangeTarget = null
 
                         redraw()
@@ -592,6 +603,7 @@ class DuelScene(
                     kingText.onClick {
 
                         if (duel.activateKingsAsAces()) {
+                            stealSwapMode = false
 
                             // Desactivar otros modos de selección
                             aceChangeMode = false
@@ -605,7 +617,38 @@ class DuelScene(
                 }
             }
 
-            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard && !suitChangeMode && !aceChangeMode && !recoverDiscardMode) {
+            if (!tutorialMode && !duel.isFinished) {
+
+                val stealText = playerLayer.pixelText(
+                    when {
+                        duel.stealSwapUsed -> "Robo usado"
+                        stealSwapMode -> "Cancelar robo"
+                        else -> "Robar e intercambiar"
+                    },
+                    16,
+                    if (duel.stealSwapUsed) Colors["#aaaaaa"]
+                    else Colors["#ffe082"]
+                ) {
+                    position(710, 110)
+                }
+
+                if (!duel.stealSwapUsed) {
+                    stealText.onClick {
+
+                        stealSwapMode = !stealSwapMode
+
+                        // Desactivar los otros modos
+                        aceChangeMode = false
+                        recoverDiscardMode = false
+                        suitChangeMode = false
+                        suitChangeTarget = null
+
+                        redraw()
+                    }
+                }
+            }
+
+            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard && !suitChangeMode && !aceChangeMode && !recoverDiscardMode && !stealSwapMode) {
                 if (tut?.allows(TutorialWait.DISCARD) != false) {
                     duel.discardSelected()
                     revealedCard = null
@@ -613,7 +656,7 @@ class DuelScene(
                     if (tut?.waiting(TutorialWait.DISCARD) == true) tut?.advance()
                 }
             }
-            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished && !suitChangeMode && !aceChangeMode && !recoverDiscardMode) {
+            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished && !suitChangeMode && !aceChangeMode && !recoverDiscardMode && !stealSwapMode) {
                 if (tut?.allows(TutorialWait.FIGHT) != false) {
                     val fought = fight(duel, gameRun)
 
