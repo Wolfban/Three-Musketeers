@@ -111,7 +111,7 @@ class DuelScene(
         println("DEBUG: Entrando a DuelScene")
 
         loadPixelFont()
-
+        GameAudio.load(views)
 
         val cardImages = mutableMapOf<Card, Bitmap>()
 
@@ -169,6 +169,15 @@ class DuelScene(
             RIVALS.forEach { background.getLayer(it)?.visible = it == rival }
         }
         pickRival()
+        fun startEncounterAudio() {
+            if (gameRun.encounter.isBoss) {
+                GameAudio.playMusic(MusicTrack.BOSS)
+                GameAudio.play(Sfx.BOSS_APPEARS)
+            } else {
+                GameAudio.playMusic(MusicTrack.DUEL)
+            }
+            GameAudio.play(Sfx.DRAW)
+        }
 
         val buttonArt = SIDE_BUTTONS.mapValues { (name, artY) ->
             background.getLayer(name)?.visible = false
@@ -196,6 +205,7 @@ class DuelScene(
         }
 
         fun toggleHands() {
+            GameAudio.play(Sfx.CLICK)
             if (handsLayer.numChildren > 0) handsLayer.removeChildren()
             else handsLayer.handsTable(panelArt, views.actualVirtualBounds) { handsLayer.removeChildren() }
         }
@@ -269,6 +279,7 @@ class DuelScene(
                 }
             }
             down(Key.H) { toggleHands() }
+            down(Key.M) { GameAudio.toggleMute() }   // silenciar o activar el sonido
         }
 
 
@@ -290,6 +301,7 @@ class DuelScene(
                     views.saveRun(gameRun.cycle, gameRun.phase, nextSeed, bossSeed)
                 }
                 duel = gameRun.duel
+                startEncounterAudio()
                 result = null
                 showOverlay = false
                 pickRival()
@@ -341,7 +353,12 @@ class DuelScene(
                     debuffed = debuffed
                 ) {
                     if (tut?.allows(TutorialWait.SELECT) != false) {
-                        duel.toggleSelect(i)
+                        val wasSelected = i in duel.selected
+                        if (duel.toggleSelect(i)) {
+                            GameAudio.play(if (wasSelected) Sfx.CARD_DESELECT else Sfx.CARD_SELECT)
+                        } else {
+                            GameAudio.play(Sfx.ERROR)   // ya hay el máximo de cartas marcadas
+                        }
                         redraw()
                         if (tut?.waiting(TutorialWait.SELECT) == true && duel.selected == tutorialTargets) tut?.advance()
                     }
@@ -369,16 +386,31 @@ class DuelScene(
                 sideLayer.pixelText("Amarillo:\nmarcada", 16) { position(SIDE_X, 195) }
             }
 
-            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard) {
+            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard, sound = null) {
                 if (tut?.allows(TutorialWait.DISCARD) != false) {
                     duel.discardSelected()
+                    GameAudio.play(Sfx.DISCARD)
                     redraw()
                     if (tut?.waiting(TutorialWait.DISCARD) == true) tut?.advance()
                 }
             }
-            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished) {
+            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished, sound = null) {
                 if (tut?.allows(TutorialWait.FIGHT) != false) {
                     val fought = fight(duel, gameRun)
+
+                    // Sonido: primero el choque de espadas, después el resultado
+                    GameAudio.play(Sfx.FIGHT)
+                    if (fought.event == RunEvent.RUN_OVER || fought.event == RunEvent.RUN_WON) GameAudio.stopMusic()
+                    val resultSfx = when (fought.event) {
+                        RunEvent.NEXT_PHASE -> Sfx.WIN
+                        RunEvent.CYCLE_CLEARED -> Sfx.BOSS_DEFEATED
+                        RunEvent.RUN_WON -> Sfx.VICTORY
+                        RunEvent.RUN_OVER -> Sfx.LOSE
+                    }
+                    this@DuelScene.launch {
+                        delay(350)
+                        GameAudio.play(resultSfx)
+                    }
 
                     views.recordBestRun(
                         RunStats.encountersWon(gameRun.cycle, gameRun.phase, fought.event != RunEvent.RUN_OVER)
@@ -574,6 +606,7 @@ class DuelScene(
             }
         }
 
+        startEncounterAudio()   // música del encuentro y sonido de reparto al entrar
         redraw()
         tut?.render()
     }
@@ -665,7 +698,9 @@ private fun Container.cardView(
 
 private fun Container.artButton(
     label: String, art: Bitmap, x: Int, y: Int, enabled: Boolean,
-    artWidth: Int = art.width, labelSize: Int = 16, onTap: () -> Unit
+    artWidth: Int = art.width, labelSize: Int = 16,
+    sound: Sfx? = Sfx.CLICK,   // null: el botón reproduce su propio sonido
+    onTap: () -> Unit
 ): Container = container {
     position(x, y)
     container {
@@ -689,7 +724,14 @@ private fun Container.artButton(
     val lineH = lines.first().height.toInt()
     val top = (h - lineH * lines.size) / 2
     lines.forEachIndexed { i, line -> line.position((w - line.width.toInt()) / 2, top + i * lineH) }
-    if (enabled) onClick { onTap() }
+    if (enabled) {
+        onClick {
+            sound?.let { GameAudio.play(it) }
+            onTap()
+        }
+    } else {
+        onClick { GameAudio.play(Sfx.ERROR) }   // botón desactivado
+    }
 }
 
 internal fun Container.framePanel(art: Bitmap, artW: Int, artH: Int): Container = container {

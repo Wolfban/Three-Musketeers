@@ -26,7 +26,6 @@ private const val LOADING_CARD = "carta_reverso.png"
 private const val LOADING_CARD_SCALE = 1.0
 private const val LOADING_SPEED = 4.0
 
-// Teclado en pantalla para el nombre (funciona igual en Android y en escritorio)
 private const val NAME_KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 private const val NAME_COLS = 9
 private const val NAME_KEY_SIZE = 46
@@ -40,6 +39,8 @@ class MenuScene : Scene() {
 
     override suspend fun SContainer.sceneInit() {
         loadPixelFont()
+        GameAudio.load(views)
+        GameAudio.playMusic(MusicTrack.MENU)
 
         val menuArt = resourcesVfs["escena_menu.ase"].readImageData(ASE.toProps())
         val art = container {
@@ -64,6 +65,7 @@ class MenuScene : Scene() {
         fun play(tutorial: Boolean, resume: Boolean = false) {
             if (leaving) return
             leaving = true
+            GameAudio.play(Sfx.SHUFFLE)   // suena mientras dice "Revolviendo cartas"
             views.launch {
                 val screen = views.actualVirtualBounds
                 val black = views.stage.solidRect(screen.width, screen.height, Colors.BLACK) {
@@ -93,6 +95,7 @@ class MenuScene : Scene() {
 
 
         val nameLayer = Container()
+        val soundLayer = Container()
         val dialogLayer = Container()
         var playerName: String? = views.loadPlayerName()
 
@@ -198,7 +201,20 @@ class MenuScene : Scene() {
 
         fun drawName() {
             nameLayer.removeChildren()
-            nameLayer.plate("Jugador: ${playerName ?: "sin nombre"}", 20, 500).onClick { openNameDialog { drawName() } }
+            nameLayer.plate("Jugador: ${playerName ?: "sin nombre"}", 20, 500).onClick {
+                GameAudio.play(Sfx.CLICK)
+                openNameDialog { drawName() }
+            }
+        }
+
+        // Botón para apagar o prender el sonido (también con la tecla M)
+        fun drawSoundToggle() {
+            soundLayer.removeChildren()
+            soundLayer.plate(if (GameAudio.muted) "Sonido: No (M)" else "Sonido: Sí (M)", 790, 20).onClick {
+                GameAudio.toggleMute()
+                GameAudio.play(Sfx.CLICK)   // solo suena si se acaba de prender
+                drawSoundToggle()
+            }
         }
 
         fun firstTime() = views.storage.getOrNull(TUTORIAL_DONE_KEY) == null
@@ -281,23 +297,53 @@ class MenuScene : Scene() {
                 )
             }
             box.onOver { if (dialogLayer.numChildren == 0) select(i) }
-            box.onClick { action() }
+            box.onClick {
+                GameAudio.play(Sfx.CLICK)
+                action()
+            }
             MenuRow(box, normal, highlighted, x, y)
         }
 
         // Con un cuadro abierto, el teclado no mueve ni activa el menú de fondo
         keys {
-            down(Key.UP) { if (dialogLayer.numChildren == 0) select((selected + rows.size - 1) % rows.size) }
-            down(Key.DOWN) { if (dialogLayer.numChildren == 0) select((selected + 1) % rows.size) }
-            down(Key.ENTER, Key.RETURN, Key.SPACE) { if (dialogLayer.numChildren == 0) options[selected].second() }
+            down(Key.UP) {
+                if (dialogLayer.numChildren == 0) {
+                    GameAudio.play(Sfx.CLICK)
+                    select((selected + rows.size - 1) % rows.size)
+                }
+            }
+            down(Key.DOWN) {
+                if (dialogLayer.numChildren == 0) {
+                    GameAudio.play(Sfx.CLICK)
+                    select((selected + 1) % rows.size)
+                }
+            }
+            down(Key.ENTER, Key.RETURN, Key.SPACE) {
+                if (dialogLayer.numChildren == 0) {
+                    GameAudio.play(Sfx.CLICK)
+                    options[selected].second()
+                }
+            }
+            down(Key.M) {
+                GameAudio.toggleMute()
+                drawSoundToggle()
+            }
         }
 
-        plate("Tutorial", 836, 500).onClick { startTutorial() }
-        plate("Estadísticas", 432, 500).onClick { openStats() }
+        plate("Tutorial", 836, 500).onClick {
+            GameAudio.play(Sfx.CLICK)
+            startTutorial()
+        }
+        plate("Estadísticas", 432, 500).onClick {
+            GameAudio.play(Sfx.CLICK)
+            openStats()
+        }
 
         addChild(nameLayer)
+        addChild(soundLayer)
         addChild(dialogLayer)
         drawName()
+        drawSoundToggle()
 
         select(0)
 
@@ -320,5 +366,12 @@ private fun Container.menuKey(
     pixelText(label, 22, if (enabled) Colors.WHITE else Colors["#bbbbbb"]) {
         position((w - width.toInt()) / 2, (h - height.toInt()) / 2)
     }
-    if (enabled) onClick { onTap() }
+    if (enabled) {
+        onClick {
+            GameAudio.play(Sfx.CLICK)
+            onTap()
+        }
+    } else {
+        onClick { GameAudio.play(Sfx.ERROR) }   // botón desactivado
+    }
 }
