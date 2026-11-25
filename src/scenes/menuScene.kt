@@ -254,9 +254,26 @@ class MenuScene : Scene() {
             )
         }
 
+        fun openCollection() {
+            if (leaving) return
+            leaving = true
+            views.launch {
+                val screen = views.actualVirtualBounds
+                val black = views.stage.solidRect(screen.width, screen.height, Colors.BLACK) {
+                    position(screen.x, screen.y)
+                    alpha = 0.0
+                }
+                black.onClick { }
+                black.tween(black::alpha[1.0], time = 0.6.seconds)
+                sceneContainer.changeTo { CollectionScene() }
+                black.tween(black::alpha[0.0], time = 0.6.seconds)
+                black.removeFromParent()
+            }
+        }
+
         val options = listOf<Pair<String, () -> Unit>>(
             "Jugar" to { startGame() },
-            "Colección" to {},
+            "Colección" to { openCollection() },
             "Salir" to { views.gameWindow.close() }
         )
 

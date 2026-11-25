@@ -56,6 +56,11 @@ private const val PLAYER_Y = 400
 private val RIVALS = listOf("Mosquetero 1", "Cobrador de impuestos", "Princesa incognita")
 
 private val BOSS_RIVALS = listOf("Princesa incognita")
+private class Scenery(val file: String, val offsetY: Int = 0)
+
+private val SCENERY = listOf(Scenery("escena_taberna.ase"), Scenery("escena_muelle.ase"), Scenery("escena_louvre.ase", offsetY = -3))
+
+private fun sceneryFor(cycle: Int) = SCENERY[(cycle - 1).mod(SCENERY.size)]
 private val NPC_RIVALS = RIVALS.filter { it !in BOSS_RIVALS }
 
 private const val BOSS_FOCUS_W = 640
@@ -155,25 +160,37 @@ class DuelScene(
 
         val sceneArt = resourcesVfs["escena_mosquetero.ase"]
             .readImageData(ASE.toProps().also { it.onlyReadVisibleLayers = false })
-        val tavernArt = resourcesVfs["escena_taberna.ase"].readImageData(ASE.toProps())
-        val tavern = tavernArt.frames.first().layerData.first().bitmap
+        val sceneryArt = SCENERY.associateWith { resourcesVfs[it.file].readImageData(ASE.toProps()) }
         val stageLayer = sceneArt.frames.first().layerData.first { it.layer.name == "Ecenario 1" }
         val tableLayer = sceneArt.frames.first().layerData.first { it.layer.name == "Mesa 1" }
-        val tavernX = stageLayer.targetX - (tavern.width - stageLayer.width) / 2
-        val tavernY = stageLayer.targetY - (tavern.height - stageLayer.height) / 2
-        val tableTop = tableLayer.targetY - tavernY
 
         solidRect(4960, 4540, Colors.BLACK).position(-2000, -2000)
-        imageDataView(tavernArt, playing = true, smoothing = false) {
-            scale(ART_SCALE)
-            position(tavernX * ART_SCALE, tavernY * ART_SCALE)
-        }
+        val scenery = container()
         val background = imageDataView(sceneArt, playing = true, smoothing = false) { scale(ART_SCALE) }
         listOf("Background", "Ecenario 1", "Mesa 1", "Barra Lateral").forEach { background.getLayer(it)?.visible = false }
-        image(tavern.sliceWithSize(0, tableTop, tavern.width, tavern.height - tableTop)) {
-            smoothing = false
-            scale(ART_SCALE)
-            position(tavernX * ART_SCALE, (tavernY + tableTop) * ART_SCALE)
+        val tableFront = container()
+
+        var sceneryShown: Scenery? = null
+        fun showScenery() {
+            val place = sceneryFor(gameRun.cycle)
+            if (place == sceneryShown) return
+            sceneryShown = place
+            val art = sceneryArt.getValue(place)
+            val bitmap = art.frames.first().layerData.first().bitmap
+            val artX = stageLayer.targetX - (bitmap.width - stageLayer.width) / 2
+            val artY = stageLayer.targetY - (bitmap.height - stageLayer.height) / 2 + place.offsetY
+            val tableTop = tableLayer.targetY - artY
+            scenery.removeChildren()
+            tableFront.removeChildren()
+            scenery.imageDataView(art, playing = true, smoothing = false) {
+                scale(ART_SCALE)
+                position(artX * ART_SCALE, artY * ART_SCALE)
+            }
+            tableFront.image(bitmap.sliceWithSize(0, tableTop, bitmap.width, bitmap.height - tableTop)) {
+                smoothing = false
+                scale(ART_SCALE)
+                position(artX * ART_SCALE, (artY + tableTop) * ART_SCALE)
+            }
         }
 
         val bossFocus = image(bossFocusBitmap()) {
@@ -183,6 +200,7 @@ class DuelScene(
 
         var rivalName = ""
         fun pickRival() {
+            showScenery()
             val pool = if (gameRun.encounter.isBoss) BOSS_RIVALS else NPC_RIVALS
             val rival = pool.random()
             rivalName = rival
@@ -387,13 +405,6 @@ class DuelScene(
                     cardImages,
                     debuffed = debuffed
                 ) {
-                    if (tut?.allows(TutorialWait.SELECT) != false) {
-                        val wasSelected = i in duel.selected
-                        if (duel.toggleSelect(i)) {
-                            GameAudio.play(if (wasSelected) Sfx.CARD_DESELECT else Sfx.CARD_SELECT)
-                        } else {
-                            GameAudio.play(Sfx.ERROR)   // ya hay el máximo de cartas marcadas
-                        }
                     if (stealSwapMode) {
                         // Robar una carta aleatoria del rival
                         // e intercambiarla por la carta seleccionada
@@ -425,7 +436,8 @@ class DuelScene(
                     } else {
                         // Selección normal para descartar
                         if (tut?.allows(TutorialWait.SELECT) != false) {
-                            duel.toggleSelect(i)
+                            val wasSelected = i in duel.selected
+                            if (duel.toggleSelect(i)) GameAudio.play(if (wasSelected) Sfx.CARD_DESELECT else Sfx.CARD_SELECT) else GameAudio.play(Sfx.ERROR)
                             redraw()
 
                             if (tut?.waiting(TutorialWait.SELECT) == true &&
@@ -520,10 +532,6 @@ class DuelScene(
                 sideLayer.pixelText("Amarillo:\nmarcada", 16) { position(SIDE_X, 195) }
             }
 
-            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard, sound = null) {
-                if (tut?.allows(TutorialWait.DISCARD) != false) {
-                    duel.discardSelected()
-                    GameAudio.play(Sfx.DISCARD)
             if (!tutorialMode && !duel.isFinished) {
                 val visionText = sideLayer.pixelText(
                     if (duel.visionUsed) "Vision usada" else "Usar Vision",
@@ -694,16 +702,16 @@ class DuelScene(
                 }
             }
 
-            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard && !suitChangeMode && !aceChangeMode && !recoverDiscardMode && !stealSwapMode) {
+            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard && !suitChangeMode && !aceChangeMode && !recoverDiscardMode && !stealSwapMode, sound = null) {
                 if (tut?.allows(TutorialWait.DISCARD) != false) {
                     duel.discardSelected()
+                    GameAudio.play(Sfx.DISCARD)
                     revealedCard = null
                     redraw()
                     if (tut?.waiting(TutorialWait.DISCARD) == true) tut?.advance()
                 }
             }
-            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished, sound = null) {
-            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished && !suitChangeMode && !aceChangeMode && !recoverDiscardMode && !stealSwapMode) {
+            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished && !suitChangeMode && !aceChangeMode && !recoverDiscardMode && !stealSwapMode, sound = null) {
                 if (tut?.allows(TutorialWait.FIGHT) != false) {
                     val fought = fight(duel, gameRun)
 

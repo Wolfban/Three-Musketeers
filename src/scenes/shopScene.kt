@@ -33,9 +33,9 @@ private const val CONFIRM_ART_H = 70
 
 private const val JOKER_ART_SCALE = 1.25
 
-private class Joker(val name: String, val file: String, val description: String)
+internal class Joker(val name: String, val file: String, val description: String)
 
-private val JOKERS = listOf(
+internal val JOKERS = listOf(
     Joker("Cambiapalos", "cambiapalos", "Cambia el palo de cualquier carta."),
     Joker("Todos As", "todos_as", "Convierte cualquier carta en un as."),
     Joker("Intercambio", "intercambio", "Roba una carta del rival y dale una tuya."),
