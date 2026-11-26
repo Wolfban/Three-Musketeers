@@ -28,7 +28,10 @@ object Scoring {
         HandCategory.FULL_HOUSE to Rule(40, 4),
         HandCategory.FOUR_OF_A_KIND to Rule(50, 5),
         HandCategory.STRAIGHT_FLUSH to Rule(100, 8),
-        HandCategory.ROYAL_FLUSH to Rule (150, 10)
+        HandCategory.ROYAL_FLUSH to Rule (150, 10),
+        HandCategory.FIVE_OF_A_KIND to Rule(160, 12),
+        HandCategory.FLUSH_HOUSE to Rule(175, 14),
+        HandCategory.FLUSH_FIVE to Rule(200, 16)
     )
 
     fun baseChipsOf(category: HandCategory): Int = rules.getValue(category).baseChips
@@ -54,7 +57,7 @@ object Scoring {
                 if (kingsAsAces) {
                     scoreFiveWithKingsAsAces(hand, debuff)
                 } else {
-                    listOf(scoreFive(hand, debuff))
+                    listOf(scoreFive(hand, hand, debuff))
                 }
 
             }
@@ -74,7 +77,8 @@ object Scoring {
             original[it].rank == Rank.KING
         }
 
-        return (0 until (1 shl kingIndexes.size)).mapNotNull { mask ->
+        // Prueba cada rey como rey y como as. Puede quedar un as repetido: está permitido.
+        return (0 until (1 shl kingIndexes.size)).map { mask ->
 
             val virtualHand = original.toMutableList()
 
@@ -84,50 +88,33 @@ object Scoring {
                 }
             }
 
-            // Evitar cartas idénticas en la combinación evaluada
-            if (virtualHand.toSet().size != virtualHand.size) {
-                return@mapNotNull null
-            }
-
-            val virtualScore = scoreFive(virtualHand, Debuff.NONE)
-
-            // Conservar las cartas originales para mostrarlas en pantalla
-            val originalScoringCards = virtualScore.scoringCards.map { card ->
-                original[virtualHand.indexOf(card)]
-            }
-
-            // Aplicar las penalizaciones del jefe a las cartas originales
-            val actualChips = virtualScore.scoringCards
-                .zip(originalScoringCards)
-                .sumOf { (evaluatedCard, originalCard) ->
-                    if (debuff.affects(originalCard)) 0
-                    else chipsOf(evaluatedCard)
-                }
-
-            virtualScore.copy(
-                scoringCards = originalScoringCards,
-                cardChips = actualChips
-            )
+            // Se evalúa la mano virtual, pero se muestran y se penalizan las cartas originales
+            scoreFive(virtualHand, original, debuff)
         }
     }
 
-    private fun scoreFive(cards: List<Card>, debuff: Debuff): ScoreBreakdown {
-        val category = PokerEvaluator.evaluate(cards).category
-        val scoring = scoringCards(cards, category)
+    /**
+     * evaluated: las cartas tal como cuentan (con reyes convertidos en ases, si aplica).
+     * original: las cartas reales en las mismas posiciones; son las que se muestran y las que penaliza el jefe.
+     */
+    private fun scoreFive(evaluated: List<Card>, original: List<Card>, debuff: Debuff): ScoreBreakdown {
+        val category = PokerEvaluator.evaluate(evaluated).category
+        val positions = scoringPositions(evaluated, category)
         val rule = rules.getValue(category)
-        val chips = scoring.filter { !debuff.affects(it) }.sumOf { chipsOf(it) }
-        return ScoreBreakdown(category, rule.baseChips, scoring, chips, rule.multiplier)
+        val chips = positions.filter { !debuff.affects(original[it]) }.sumOf { chipsOf(evaluated[it]) }
+        return ScoreBreakdown(category, rule.baseChips, positions.map { original[it] }, chips, rule.multiplier)
     }
 
-
-    private fun scoringCards(cards: List<Card>, category: HandCategory): List<Card> {
-        val groups = cards.groupBy { it.rank }.values
+    // Posiciones de las cartas que forman la jugada. Se usan posiciones porque puede haber cartas repetidas.
+    private fun scoringPositions(cards: List<Card>, category: HandCategory): List<Int> {
+        val counts = cards.groupingBy { it.rank }.eachCount()
+        fun withCount(n: Int) = cards.indices.filter { counts.getValue(cards[it].rank) == n }
         return when (category) {
-            HandCategory.HIGH_CARD -> listOf(cards.maxBy { it.rank.value })
-            HandCategory.ONE_PAIR, HandCategory.TWO_PAIR -> groups.filter { it.size == 2 }.flatten()
-            HandCategory.THREE_OF_A_KIND -> groups.filter { it.size == 3 }.flatten()
-            HandCategory.FOUR_OF_A_KIND -> groups.filter { it.size == 4 }.flatten()
-            else -> cards
+            HandCategory.HIGH_CARD -> listOf(cards.indices.maxBy { cards[it].rank.value })
+            HandCategory.ONE_PAIR, HandCategory.TWO_PAIR -> withCount(2)
+            HandCategory.THREE_OF_A_KIND -> withCount(3)
+            HandCategory.FOUR_OF_A_KIND -> withCount(4)
+            else -> cards.indices.toList()
         }
     }
 }

@@ -45,7 +45,13 @@ object Difficulty {
     const val BOSS_ROUNDS = 2
 
 
-    const val CYCLES_TO_WIN = 6
+    // MODO DEMO (testing público): la run se gana en 3 ciclos.
+    // Para el juego normal de 6 ciclos, cambiar DEMO_MODE a false.
+    const val DEMO_MODE = true
+    const val DEMO_CYCLES = 3
+    const val FULL_CYCLES = 6
+
+    val CYCLES_TO_WIN: Int = if (DEMO_MODE) DEMO_CYCLES else FULL_CYCLES
 
 
     const val ENDLESS_BONUS_PERCENT = 15

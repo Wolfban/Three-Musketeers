@@ -18,7 +18,7 @@ private const val TUTORIAL_PANEL_TOP_Y = 12
 private const val TUTORIAL_PANEL_BOTTOM_Y = 350
 private const val HANDS_PANEL_ART_W = 270
 private const val HANDS_PANEL_ART_H = 150
-private const val HANDS_ROW_STEP = 30
+private const val HANDS_ROW_STEP = 26
 private const val HANDS_CARDS_X = 440
 private const val HANDS_CARD_STEP = 60
 private const val HANDS_CARD_W = 80
@@ -28,6 +28,10 @@ private const val HANDS_DIM_ALPHA = 150
 private fun hand(vararg cards: Pair<Rank, Suit>) = cards.map { Card(it.first, it.second) }
 
 private val HAND_EXAMPLES = mapOf(
+    // Solo con comodines: las cartas repetidas salen de Cambiapalos o Todos As
+    HandCategory.FLUSH_FIVE to hand(Rank.ACE to Suit.SPADES, Rank.ACE to Suit.SPADES, Rank.ACE to Suit.SPADES, Rank.ACE to Suit.SPADES, Rank.ACE to Suit.SPADES),
+    HandCategory.FLUSH_HOUSE to hand(Rank.QUEEN to Suit.HEARTS, Rank.QUEEN to Suit.HEARTS, Rank.QUEEN to Suit.HEARTS, Rank.SEVEN to Suit.HEARTS, Rank.SEVEN to Suit.HEARTS),
+    HandCategory.FIVE_OF_A_KIND to hand(Rank.ACE to Suit.SPADES, Rank.ACE to Suit.HEARTS, Rank.ACE to Suit.DIAMONDS, Rank.ACE to Suit.CLUBS, Rank.ACE to Suit.SPADES),
     HandCategory.ROYAL_FLUSH to hand(Rank.ACE to Suit.SPADES, Rank.KING to Suit.SPADES, Rank.QUEEN to Suit.SPADES, Rank.JACK to Suit.SPADES, Rank.TEN to Suit.SPADES),
     HandCategory.STRAIGHT_FLUSH to hand(Rank.NINE to Suit.HEARTS, Rank.EIGHT to Suit.HEARTS, Rank.SEVEN to Suit.HEARTS, Rank.SIX to Suit.HEARTS, Rank.FIVE to Suit.HEARTS),
     HandCategory.FOUR_OF_A_KIND to hand(Rank.KING to Suit.CLUBS, Rank.KING to Suit.DIAMONDS, Rank.KING to Suit.HEARTS, Rank.KING to Suit.SPADES, Rank.THREE to Suit.DIAMONDS),

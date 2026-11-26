@@ -10,6 +10,7 @@ import korlibs.korge.service.storage.*
 import korlibs.korge.tween.*
 import korlibs.korge.view.*
 import korlibs.korge.view.animation.*
+import korlibs.platform.Platform
 import kotlinx.coroutines.launch
 import model.Difficulty
 import model.PlayerName
@@ -65,7 +66,7 @@ class MenuScene : Scene() {
         fun play(tutorial: Boolean, resume: Boolean = false) {
             if (leaving) return
             leaving = true
-            GameAudio.play(Sfx.SHUFFLE)   // suena mientras dice "Revolviendo cartas"
+            GameAudio.play(Sfx.SHUFFLE)
             views.launch {
                 val screen = views.actualVirtualBounds
                 val black = views.stage.solidRect(screen.width, screen.height, Colors.BLACK) {
@@ -133,7 +134,8 @@ class MenuScene : Scene() {
             closeDialog()
             dimBackground()
             val best = views.loadBestRun()
-            val lines = mutableListOf("Jugador: ${playerName ?: "sin nombre"}", "Runs ganadas: ${views.loadRunsWon()}")
+            val runsWon = views.loadRunsWon()
+            val lines = mutableListOf("Jugador: ${playerName ?: "sin nombre"}", "Runs ganadas: $runsWon")
             if (best == 0) {
                 lines += "Todavía no has ganado un duelo."
             } else {
@@ -141,12 +143,27 @@ class MenuScene : Scene() {
                 lines += "Llegaste a: Ciclo ${RunStats.cycleReached(best)} - Fase ${RunStats.phaseReached(best)}/${Difficulty.PHASES_PER_CYCLE}"
                 lines += "Jefes vencidos: ${RunStats.bossesBeaten(best)}"
             }
-            dialogLayer.dialogPanel(220, 120, 520, 290)
-            dialogLayer.pixelText("Estadísticas", 33) { position((960 - width.toInt()) / 2, 142) }
+            dialogLayer.dialogPanel(200, 80, 560, 380)
+            dialogLayer.pixelText("Estadísticas", 33) { position((960 - width.toInt()) / 2, 100) }
             lines.forEachIndexed { i, line ->
-                dialogLayer.pixelText(line, 22) { position((960 - width.toInt()) / 2, 196 + i * 30) }
+                dialogLayer.pixelText(line, 22) { position((960 - width.toInt()) / 2, 158 + i * 34) }
             }
-            dialogLayer.menuKey("Cerrar", 380, 340, 200, 50, color = Colors["#37474f"]) { closeDialog() }
+            // Dos botones centrados: borrar (pide confirmación) y cerrar
+            dialogLayer.menuKey(
+                "Borrar", 270, 386, 200, 50,
+                enabled = best > 0 || runsWon > 0 || views.loadUnlockedJokers().isNotEmpty(), color = Colors["#8d2f2f"]
+            ) {
+                openChoice(
+                    "¿Borrar estadísticas?",
+                    "Se borran el récord, las runs y la colección.",
+                    "Borrar" to {
+                        views.clearStats()
+                        openStats()
+                    },
+                    "Cancelar" to { openStats() }
+                )
+            }
+            dialogLayer.menuKey("Cerrar", 490, 386, 200, 50, color = Colors["#37474f"]) { closeDialog() }
         }
 
 
@@ -207,7 +224,7 @@ class MenuScene : Scene() {
             }
         }
 
-        // Botón para apagar o prender el sonido (también con la tecla M)
+
         fun drawSoundToggle() {
             soundLayer.removeChildren()
             soundLayer.plate(if (GameAudio.muted) "Sonido: No (M)" else "Sonido: Sí (M)", 790, 20).onClick {
@@ -271,11 +288,16 @@ class MenuScene : Scene() {
             }
         }
 
-        val options = listOf<Pair<String, () -> Unit>>(
-            "Jugar" to { startGame() },
-            "Colección" to { openCollection() },
-            "Salir" to { views.gameWindow.close() }
-        )
+
+        val isMobile = Platform.isAndroid || Platform.isIos
+        val options = buildList<Pair<String, () -> Unit>> {
+            add("Jugar" to { startGame() })
+            add("Colección" to { openCollection() })
+            if (!isMobile) add("Salir" to { views.gameWindow.close() })
+        }
+
+
+        val rowOffset = (3 - options.size) * rowStep / 2.0
 
         lateinit var rows: List<MenuRow>
 
@@ -296,7 +318,7 @@ class MenuScene : Scene() {
 
         rows = options.mapIndexed { i, (label, action) ->
             val x = selectedArt.targetX * ART_SCALE
-            val y = (selectedArt.targetY + i * rowStep) * ART_SCALE
+            val y = (selectedArt.targetY + i * rowStep + rowOffset) * ART_SCALE
             val box = art.container()
             val normal = box.image(normalArt.slice) {
                 smoothing = false
@@ -321,7 +343,7 @@ class MenuScene : Scene() {
             MenuRow(box, normal, highlighted, x, y)
         }
 
-        // Con un cuadro abierto, el teclado no mueve ni activa el menú de fondo
+
         keys {
             down(Key.UP) {
                 if (dialogLayer.numChildren == 0) {
@@ -351,7 +373,9 @@ class MenuScene : Scene() {
             GameAudio.play(Sfx.CLICK)
             startTutorial()
         }
-        plate("Estadísticas", 432, 500).onClick {
+        val stats = plate("Estadísticas", 0, 500)
+        stats.x = (views.virtualWidth - stats.width) / 2
+        stats.onClick {
             GameAudio.play(Sfx.CLICK)
             openStats()
         }
@@ -364,7 +388,7 @@ class MenuScene : Scene() {
 
         select(0)
 
-        // La primera vez que se abre el juego se pide el nombre
+
         if (playerName == null) openNameDialog { drawName() }
     }
 }
@@ -389,6 +413,6 @@ private fun Container.menuKey(
             onTap()
         }
     } else {
-        onClick { GameAudio.play(Sfx.ERROR) }   // botón desactivado
+        onClick { GameAudio.play(Sfx.ERROR) }
     }
 }

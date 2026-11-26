@@ -3,7 +3,11 @@ package model
 
 enum class HandCategory {
     HIGH_CARD, ONE_PAIR, TWO_PAIR, THREE_OF_A_KIND, STRAIGHT,
-    FLUSH, FULL_HOUSE, FOUR_OF_A_KIND, STRAIGHT_FLUSH, ROYAL_FLUSH
+    FLUSH, FULL_HOUSE, FOUR_OF_A_KIND, STRAIGHT_FLUSH, ROYAL_FLUSH,
+
+    FIVE_OF_A_KIND,
+    FLUSH_HOUSE,
+    FLUSH_FIVE
 }
 
 data class HandResult(
@@ -24,20 +28,23 @@ data class HandResult(
 object PokerEvaluator {
 
     fun evaluate(cards: List<Card>): HandResult {
+
         require(cards.size == 5) { "Se necesitan exactamente 5 cartas" }
-        require(cards.toSet().size == 5) { "La mano tiene cartas repetidas" }
 
         val values = cards.map { it.rank.value }.sortedDescending()
         val isFlush = cards.map { it.suit }.toSet().size == 1
         val straightHigh = straightHigh(values)
 
-        // Grupos por valor, ordenados por cantidad y luego por valor (ambos descendente)
+
         val groups = values.groupingBy { it }.eachCount().entries
             .sortedWith(compareByDescending<Map.Entry<Int, Int>> { it.value }.thenByDescending { it.key })
         val counts = groups.map { it.value }
         val ordered = groups.map { it.key }
 
         return when {
+            counts == listOf(5) && isFlush -> HandResult(HandCategory.FLUSH_FIVE, ordered)
+            counts == listOf(5) -> HandResult(HandCategory.FIVE_OF_A_KIND, ordered)
+            counts == listOf(3, 2) && isFlush -> HandResult(HandCategory.FLUSH_HOUSE, ordered)
             isFlush && straightHigh == 14 -> HandResult(HandCategory.ROYAL_FLUSH, listOf(14))
             isFlush && straightHigh != null -> HandResult(HandCategory.STRAIGHT_FLUSH, listOf(straightHigh))
             counts == listOf(4, 1) -> HandResult(HandCategory.FOUR_OF_A_KIND, ordered)
@@ -54,7 +61,7 @@ object PokerEvaluator {
         require(cards.size >= 5) { "Se necesitan al menos 5 cartas" }
         return Combinations.of(cards, 5).map { evaluate(it) }.max()
     }
-    // Devuelve la carta más alta de la escalera, o null si no hay escalera
+
     private fun straightHigh(sortedDesc: List<Int>): Int? {
         if (sortedDesc.toSet().size != 5) return null
         if (sortedDesc[0] - sortedDesc[4] == 4) return sortedDesc[0]

@@ -12,6 +12,9 @@ fun categoryName(c: HandCategory): String = when (c) {
     HandCategory.FOUR_OF_A_KIND -> "Póker (four of a kind)"
     HandCategory.STRAIGHT_FLUSH -> "Escalera de color"
     HandCategory.ROYAL_FLUSH -> "Escalera real (royal flush)"
+    HandCategory.FIVE_OF_A_KIND -> "Quinta (five of a kind)"
+    HandCategory.FLUSH_HOUSE -> "Full house de color (flush house)"
+    HandCategory.FLUSH_FIVE -> "Quinta de color (flush five)"
 }
 
 fun cardText(card: Card): String {

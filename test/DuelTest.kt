@@ -9,7 +9,7 @@ class DuelTest {
     @Test fun handsNeverShareCards() {
         repeat(100) { seed ->
             val duel = Duel(Deck(Random(seed)))
-            assertEquals(10, (duel.playerHand + duel.enemyHand).toSet().size)
+            assertEquals(Duel.HAND_SIZE * 2, (duel.playerHand + duel.enemyHand).toSet().size)
         }
     }
 
@@ -36,10 +36,10 @@ class DuelTest {
         assertEquals(9, duel.discardPile.size)
     }
 
-    @Test fun cannotSelectMoreThanThree() {
+    @Test fun cannotSelectMoreThanTheMaximum() {
         val duel = Duel()
-        assertTrue(duel.toggleSelect(0)); assertTrue(duel.toggleSelect(1)); assertTrue(duel.toggleSelect(2))
-        assertFalse(duel.toggleSelect(3))
+        repeat(Duel.MAX_DISCARD_PER_ROUND) { assertTrue(duel.toggleSelect(it)) }
+        assertFalse(duel.toggleSelect(Duel.MAX_DISCARD_PER_ROUND))
     }
 
     @Test fun discardNeedsSelection() {
@@ -48,9 +48,9 @@ class DuelTest {
         assertFailsWith<IllegalArgumentException> { duel.discardSelected() }
     }
 
-    @Test fun cannotDiscardMoreThanThreeCards() {
+    @Test fun cannotDiscardMoreThanTheMaximum() {
         val duel = Duel()
-        assertFailsWith<IllegalArgumentException> { duel.playerDiscard(setOf(0, 1, 2, 3)) }
+        assertFailsWith<IllegalArgumentException> { duel.playerDiscard((0..Duel.MAX_DISCARD_PER_ROUND).toSet()) }
     }
 
     @Test fun onlyThreeRounds() {
@@ -74,5 +74,30 @@ class DuelTest {
         assertFalse(duel.canDiscard)
         assertFailsWith<IllegalArgumentException> { duel.playerDiscard(setOf(0)) }
         assertFailsWith<IllegalArgumentException> { duel.fight() }
+    }
+    // ---------- comodines sin límites de cartas repetidas ----------
+
+    @Test fun convertToAceCanRepeatAnAce() {
+        val duel = Duel(Deck(Random(9L)))
+        val target = duel.playerHand.indexOfFirst { it.rank != Rank.ACE }
+        val existingAce = Card(Rank.ACE, duel.playerHand[target].suit)
+        duel.playerHand[(target + 1) % duel.playerHand.size] = existingAce   // ya hay un as de ese palo
+        assertTrue(duel.convertToAce(target))
+        assertEquals(2, duel.playerHand.count { it == existingAce })
+    }
+
+    @Test fun changeSuitCanRepeatACard() {
+        val duel = Duel(Deck(Random(10L)))
+        val card = duel.playerHand[0]
+        val otherSuit = Suit.entries.first { it != card.suit }
+        duel.playerHand[1] = card.copy(suit = otherSuit)          // la carta destino ya está en la mano
+        assertTrue(duel.changeSuit(0, otherSuit))
+        assertEquals(duel.playerHand[0], duel.playerHand[1])
+    }
+
+    @Test fun stealAndSwapAlwaysWorks() {
+        val duel = Duel(Deck(Random(11L)))
+        duel.playerHand[0] = duel.enemyHand[0]                    // aunque quede repetida
+        assertTrue(duel.stealAndSwap(0))
     }
 }

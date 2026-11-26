@@ -37,10 +37,41 @@ class PokerEvaluatorTest {
         assertTrue(PokerEvaluator.evaluate(a) > PokerEvaluator.evaluate(b))
     }
 
-    @Test fun rejectsDuplicateCards() {
+    // Los comodines pueden crear cartas repetidas: el evaluador las acepta
+    @Test fun acceptsDuplicateCards() {
         val h = hand(Rank.KING to Suit.HEARTS, Rank.KING to Suit.HEARTS, Rank.NINE to Suit.SPADES,
             Rank.SEVEN to Suit.HEARTS, Rank.THREE to Suit.DIAMONDS)
-        assertFailsWith<IllegalArgumentException> { PokerEvaluator.evaluate(h) }
+        assertEquals(HandCategory.ONE_PAIR, PokerEvaluator.evaluate(h).category)
+    }
+
+    @Test fun detectsFiveOfAKind() {
+        val h = hand(Rank.ACE to Suit.SPADES, Rank.ACE to Suit.HEARTS, Rank.ACE to Suit.DIAMONDS,
+            Rank.ACE to Suit.CLUBS, Rank.ACE to Suit.SPADES)
+        assertEquals(HandCategory.FIVE_OF_A_KIND, PokerEvaluator.evaluate(h).category)
+    }
+
+    @Test fun fiveIdenticalCardsAreFlushFive() {
+        val h = List(5) { Card(Rank.SEVEN, Suit.HEARTS) }
+        assertEquals(HandCategory.FLUSH_FIVE, PokerEvaluator.evaluate(h).category)
+    }
+
+    @Test fun fullHouseOfOneSuitIsFlushHouse() {
+        val h = hand(Rank.QUEEN to Suit.HEARTS, Rank.QUEEN to Suit.HEARTS, Rank.QUEEN to Suit.HEARTS,
+            Rank.SEVEN to Suit.HEARTS, Rank.SEVEN to Suit.HEARTS)
+        assertEquals(HandCategory.FLUSH_HOUSE, PokerEvaluator.evaluate(h).category)
+    }
+
+    @Test fun fullHouseOfMixedSuitsIsStillFullHouse() {
+        val h = hand(Rank.QUEEN to Suit.HEARTS, Rank.QUEEN to Suit.HEARTS, Rank.QUEEN to Suit.SPADES,
+            Rank.SEVEN to Suit.HEARTS, Rank.SEVEN to Suit.HEARTS)
+        assertEquals(HandCategory.FULL_HOUSE, PokerEvaluator.evaluate(h).category)
+    }
+
+    @Test fun jokerOnlyHandsAreOnTop() {
+        assertTrue(HandCategory.FIVE_OF_A_KIND > HandCategory.ROYAL_FLUSH)
+        assertTrue(HandCategory.FLUSH_HOUSE > HandCategory.FIVE_OF_A_KIND)
+        assertTrue(HandCategory.FLUSH_FIVE > HandCategory.FLUSH_HOUSE)
+        assertEquals(HandCategory.FLUSH_FIVE, HandCategory.entries.last())
     }
     @Test fun detectsRoyalFlush() {
         val h = hand(Rank.ACE to Suit.SPADES, Rank.KING to Suit.SPADES, Rank.QUEEN to Suit.SPADES,

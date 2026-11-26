@@ -11,6 +11,7 @@ import korlibs.korge.tween.*
 import korlibs.korge.view.*
 import korlibs.korge.view.animation.*
 import kotlinx.coroutines.launch
+import model.*
 import kotlin.math.sin
 import kotlin.time.Duration.Companion.seconds
 
@@ -31,25 +32,15 @@ private const val SHOP_BUTTON_Y = 444
 private const val CONFIRM_ART_W = 160
 private const val CONFIRM_ART_H = 70
 
-private const val JOKER_ART_SCALE = 1.25
-
-internal class Joker(val name: String, val file: String, val description: String)
-
-internal val JOKERS = listOf(
-    Joker("Cambiapalos", "cambiapalos", "Cambia el palo de cualquier carta."),
-    Joker("Todos As", "todos_as", "Convierte cualquier carta en un as."),
-    Joker("Intercambio", "intercambio", "Roba una carta del rival y dale una tuya."),
-    Joker("Recuperar", "recuperar", "Recupera una carta de tu pila de descarte."),
-    Joker("Reyes Ases", "reyes_ases", "Los reyes cuentan como ases."),
-    Joker("Apuesta", "apuesta", "Una carta al azar de tu mano se convierte\nen un comodín al azar."),
-    Joker("Espejo", "espejo", "Vuelve a usar un comodín que ya usaste\nen esta partida."),
-    Joker("Futuro", "futuro", "Mira la próxima carta del mazo antes\nde decidir tu descarte.")
-)
+internal const val JOKER_ART_SCALE = 1.25
+private const val REPLACE_ART_H = 100
 
 class ShopScene : Scene() {
 
     override suspend fun SContainer.sceneInit() {
         loadPixelFont()
+        GameAudio.load(views)
+        GameAudio.playMusic(MusicTrack.SHOP)
 
         val shopArt = resourcesVfs["escena_tienda.ase"].readImageData(ASE.toProps())
         val uiArt = resourcesVfs["escena_mosquetero.ase"].readImageData(ASE.toProps().also {
@@ -63,7 +54,10 @@ class ShopScene : Scene() {
             it.setExtra("layers", SHOP_KEEPER)
         })
         val keeper = keeperArt.frames.first().layerData.first { it.layer.name == SHOP_KEEPER }
-        val offer = JOKERS.shuffled().take(SHOP_CHOICES)
+
+        // La oferta nunca repite un comodín que el jugador ya tiene
+        var inventory = views.loadInventory()
+        val offer = inventory.shopOffer(count = SHOP_CHOICES)
         val jokerArt = offer.associateWith { resourcesVfs["comodines/${it.file}.ase"].readImageData(ASE.toProps()).mainBitmap }
 
         val artX = (views.virtualWidth - shopArt.width * ART_SCALE) / 2
@@ -87,6 +81,12 @@ class ShopScene : Scene() {
         framePanel(panelArt, SHOP_BOX_ART_W, SHOP_BOX_ART_H).position(SHOP_BOX_X, SHOP_BOX_Y)
         pixelText("Elige un comodín", 22, Colors["#ffe08a"]) { position(SHOP_BOX_X + (boxW - width.toInt()) / 2, SHOP_BOX_Y + 22) }
 
+        val ownedText = if (inventory.jokers.isEmpty()) "Inventario vacío" else
+            "Tienes: ${inventory.jokers.joinToString(", ") { it.title }}"
+        pixelText("$ownedText  (${inventory.jokers.size}/${JokerInventory.MAX_SIZE})", 16, Colors["#d9b26a"]) {
+            position(SHOP_BOX_X + (boxW - width.toInt()) / 2, SHOP_BOX_Y + boxH - 34)
+        }
+
         val cellW = (boxW - 60) / SHOP_CHOICES
         val cellH = boxH - 90
         val cellsX = SHOP_BOX_X + 30
@@ -105,12 +105,13 @@ class ShopScene : Scene() {
         val dialog = container()
         var selected = 0
         var leaving = false
+        var confirmAction: (() -> Unit)? = null
 
         fun select(index: Int) {
             selected = index
             val joker = offer[index]
             info.removeChildren()
-            info.pixelText(joker.name, 22) { position(SHOP_BOX_X + 36, SHOP_INFO_Y + 26) }
+            info.pixelText(joker.title, 22) { position(SHOP_BOX_X + 36, SHOP_INFO_Y + 26) }
             info.pixelText(joker.description, 16) { position(SHOP_BOX_X + 36, SHOP_INFO_Y + 68) }
             val x = cellsX + index * cellW
             val c = Colors["#ffd54f"]
@@ -121,7 +122,10 @@ class ShopScene : Scene() {
             glow.solidRect(3, cellH, c).position(x + cellW - 3, cellsY)
         }
 
-        fun closeDialog() = dialog.removeChildren()
+        fun closeDialog() {
+            dialog.removeChildren()
+            confirmAction = null
+        }
 
         fun backToDuel() {
             if (leaving) return
@@ -140,20 +144,49 @@ class ShopScene : Scene() {
             }
         }
 
+
+        fun take(newInventory: JokerInventory) {
+            inventory = newInventory
+            views.saveInventory(newInventory)
+            GameAudio.play(Sfx.CARD_SELECT)
+            backToDuel()
+        }
+
         fun choose() {
             if (dialog.numChildren > 0) return
             val joker = offer[selected]
             val screen = views.actualVirtualBounds
             val buttonW = SHOP_BUTTON_ART_W * ART_SCALE.toInt()
             dialog.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 170)).position(screen.x, screen.y).onClick { }
-            dialog.framePanel(panelArt, CONFIRM_ART_W, CONFIRM_ART_H).position(240, 165)
-            dialog.pixelText("¿Elegir ${joker.name}?", 22) { position((960 - width.toInt()) / 2, 205) }
+
+            if (!inventory.isFull) {
+                dialog.framePanel(panelArt, CONFIRM_ART_W, CONFIRM_ART_H).position(240, 165)
+                dialog.pixelText("¿Elegir ${joker.title}?", 22) { position((960 - width.toInt()) / 2, 205) }
+                val accept = { take(inventory.add(joker)) }
+                confirmAction = accept
+                dialog.artButton(
+                    "Elegir", buttonArt, 480 - buttonW - 12, 270, true,
+                    artWidth = SHOP_BUTTON_ART_W, labelSize = 22, onTap = accept
+                )
+                dialog.artButton(
+                    "Cancelar", buttonArt, 492, 270, true,
+                    artWidth = SHOP_BUTTON_ART_W, labelSize = 22, onTap = ::closeDialog
+                )
+                return
+            }
+
+            // Inventario lleno: el jugador elige cuál de sus comodines suelta
+            dialog.framePanel(panelArt, CONFIRM_ART_W, REPLACE_ART_H).position(240, 120)
+            dialog.pixelText("Inventario lleno", 22, Colors["#ffe08a"]) { position((960 - width.toInt()) / 2, 150) }
+            dialog.pixelText("¿Cuál cambias por ${joker.title}?", 16) { position((960 - width.toInt()) / 2, 190) }
+            inventory.jokers.forEachIndexed { i, owned ->
+                dialog.artButton(
+                    owned.title, buttonArt, if (i == 0) 480 - buttonW - 12 else 492, 230, true,
+                    artWidth = SHOP_BUTTON_ART_W, labelSize = 18
+                ) { take(inventory.replace(owned, joker)) }
+            }
             dialog.artButton(
-                "Elegir", buttonArt, 480 - buttonW - 12, 270, true,
-                artWidth = SHOP_BUTTON_ART_W, labelSize = 22, onTap = ::backToDuel
-            )
-            dialog.artButton(
-                "Cancelar", buttonArt, 492, 270, true,
+                "Cancelar", buttonArt, 480 - buttonW / 2, 318, true,
                 artWidth = SHOP_BUTTON_ART_W, labelSize = 22, onTap = ::closeDialog
             )
         }
@@ -168,9 +201,11 @@ class ShopScene : Scene() {
                 scale(JOKER_ART_SCALE)
                 position(x + (cellW - art.width * JOKER_ART_SCALE) / 2, cellsY + 4.0)
             }
-            cell.pixelText(joker.name, 16) { position(x + (cellW - width.toInt()) / 2, cellsY + 122) }
+            cell.pixelText(joker.title, 16) { position(x + (cellW - width.toInt()) / 2, cellsY + 122) }
             cell.onOver { if (dialog.numChildren == 0) select(i) }
             cell.onClick {
+                if (dialog.numChildren > 0) return@onClick
+                GameAudio.play(Sfx.CLICK)
                 select(i)
                 choose()
             }
@@ -185,9 +220,26 @@ class ShopScene : Scene() {
 
         keys {
             down(Key.ESCAPE, Key.BACK) { closeDialog() }
-            down(Key.LEFT) { if (dialog.numChildren == 0) select((selected + SHOP_CHOICES - 1) % SHOP_CHOICES) }
-            down(Key.RIGHT) { if (dialog.numChildren == 0) select((selected + 1) % SHOP_CHOICES) }
-            down(Key.ENTER, Key.RETURN, Key.SPACE) { if (dialog.numChildren > 0) backToDuel() else choose() }
+            down(Key.LEFT) {
+                if (dialog.numChildren == 0) {
+                    GameAudio.play(Sfx.CLICK)
+                    select((selected + offer.size - 1) % offer.size)
+                }
+            }
+            down(Key.RIGHT) {
+                if (dialog.numChildren == 0) {
+                    GameAudio.play(Sfx.CLICK)
+                    select((selected + 1) % offer.size)
+                }
+            }
+            down(Key.ENTER, Key.RETURN, Key.SPACE) {
+                if (dialog.numChildren > 0) {
+                    confirmAction?.invoke()
+                } else {
+                    GameAudio.play(Sfx.CLICK)
+                    choose()
+                }
+            }
         }
 
         select(0)

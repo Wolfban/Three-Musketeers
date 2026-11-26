@@ -53,12 +53,38 @@ private const val ENEMY_STEP = 55
 private const val ENEMY_X = TABLE_X + (TABLE_W - (6 * ENEMY_STEP + ENEMY_CARD_W)) / 2
 private const val PLAYER_Y = 400
 
+// ---------- menú del duelo ----------
+private const val GAME_MENU_PANEL_ART_W = 90        // 270 px
+private const val GAME_MENU_PANEL_ART_H = 135       // 405 px
+private const val DECKS_PANEL_ART_W = 160           // 480 px
+
+// ---------- comodines ----------
+private const val INVENTORY_BUTTON_X = 770          // botón "Comodines" (arriba a la derecha)
+private const val INVENTORY_BUTTON_Y = 12
+private const val INVENTORY_PANEL_X = 180
+private const val INVENTORY_PANEL_Y = 40
+private const val INVENTORY_PANEL_ART_W = 200      // 600 px de ancho
+private const val INVENTORY_PANEL_ART_H = 142      // 426 px de alto
+private const val JOKER_SLOT_W = 180
+private const val JOKER_SLOT_H = 170
+private const val JOKER_SLOT_GAP = 30
+private const val JOKER_SLOT_Y = 112
+private const val JOKER_HINT_Y = 352               // "Cambiapalos: toca una carta · Cancelar"
+private const val JOKER_HOLD_SECONDS = 0.45         // mantener presionado para ver la descripción
+private const val INVENTORY_HINT = "Toca para usar - mantén para ver qué hace"
+private const val JOKER_CONFIRM_ART_W = 200         // cuadro "¿Usar ...?"
+
 private val RIVALS = listOf("Mosquetero 1", "Cobrador de impuestos", "Princesa incognita")
 
 private val BOSS_RIVALS = listOf("Princesa incognita")
+
 private class Scenery(val file: String, val offsetY: Int = 0)
 
-private val SCENERY = listOf(Scenery("escena_taberna.ase"), Scenery("escena_muelle.ase"), Scenery("escena_louvre.ase", offsetY = -3))
+private val SCENERY = listOf(
+    Scenery("escena_taberna.ase"),
+    Scenery("escena_muelle.ase"),
+    Scenery("escena_louvre.ase", offsetY = -3)
+)
 
 private fun sceneryFor(cycle: Int) = SCENERY[(cycle - 1).mod(SCENERY.size)]
 private val NPC_RIVALS = RIVALS.filter { it !in BOSS_RIVALS }
@@ -122,6 +148,65 @@ class DuelScene(
         var recoverDiscardMode = false
         var stealSwapMode = false
 
+
+        if (saved == null) views.saveInventory(JokerInventory())
+        var inventory = views.loadInventory()
+        var confirmJokers = views.loadConfirmJokers()
+        var inventoryOpen = false
+
+
+        fun anyJokerMode() = suitChangeMode || aceChangeMode || recoverDiscardMode || stealSwapMode
+
+        fun cancelJokerModes() {
+            suitChangeMode = false
+            suitChangeTarget = null
+            aceChangeMode = false
+            recoverDiscardMode = false
+            stealSwapMode = false
+        }
+
+
+        fun resetJokerState() {
+            cancelJokerModes()
+            revealedCard = null
+            inventoryOpen = false
+        }
+
+
+        fun consumeJoker(type: JokerType) {
+            if (type !in inventory) return
+            inventory = inventory.remove(type)
+
+            if (!tutorialMode && views.unlockJoker(type)) {
+                val toast = container { alpha = 0.0 }
+                val plate = toast.plate("¡Nuevo en la colección: ${type.title}!", 0, 60, Colors["#ffe08a"])
+                plate.x = (960 - plate.width) / 2
+                this@DuelScene.launch {
+                    toast.tween(toast::alpha[1.0], time = 0.3.seconds)
+                    delay(2200)
+                    toast.tween(toast::alpha[0.0], time = 0.6.seconds)
+                    toast.removeFromParent()
+                }
+            }
+        }
+
+
+        fun activateJoker(type: JokerType) {
+            cancelJokerModes()
+            when (type) {
+                JokerType.CHANGE_SUIT -> suitChangeMode = true
+                JokerType.TO_ACE -> aceChangeMode = true
+                JokerType.STEAL_SWAP -> stealSwapMode = true
+                JokerType.RECOVER -> recoverDiscardMode = true
+                JokerType.KINGS_AS_ACES -> if (duel.activateKingsAsAces()) consumeJoker(type)
+                JokerType.VISION -> {
+                    revealedCard = duel.useVision()
+                    if (revealedCard != null) consumeJoker(type)
+                }
+            }
+            GameAudio.play(Sfx.CARD_SELECT)
+        }
+
         views.saveRun(gameRun.cycle, gameRun.phase, nextSeed, bossSeed)
 
         val playerLabel = views.loadPlayerName() ?: "Tú"
@@ -169,6 +254,7 @@ class DuelScene(
         val background = imageDataView(sceneArt, playing = true, smoothing = false) { scale(ART_SCALE) }
         listOf("Background", "Ecenario 1", "Mesa 1", "Barra Lateral").forEach { background.getLayer(it)?.visible = false }
         val tableFront = container()
+
 
         var sceneryShown: Scenery? = null
         fun showScenery() {
@@ -233,6 +319,10 @@ class DuelScene(
         val sidebar = container()
 
         val deathArt =resourcesVfs["escena_muerte.ase"].readImageData(ASE.toProps())
+        val cardBack = resourcesVfs["carta_reverso.png"].readBitmap()
+        val jokerArt = JokerType.entries.associateWith {
+            resourcesVfs["comodines/${it.file}.ase"].readImageData(ASE.toProps()).mainBitmap
+        }
 
         val enemyLayer = container()
         val playerLayer = container()
@@ -240,6 +330,8 @@ class DuelScene(
         val overlayLayer = container()
         val tutorialLayer = container()
         val handsLayer = container()
+        val inventoryLayer = container()
+        val gameMenuLayer = container()
         val confirmLayer = container()
         var tut: DuelTutorial? = null
         val tutorialTargets = if (!tutorialMode) emptySet() else {
@@ -271,6 +363,23 @@ class DuelScene(
 
         lateinit var fadeToDeath: suspend () -> Unit
         lateinit var fadeToVictory: suspend (FightResult) -> Unit
+        lateinit var renderInventory: () -> Unit
+
+        fun closeInventory() {
+            inventoryOpen = false
+            inventoryLayer.removeChildren()
+        }
+
+        fun toggleInventory() {
+            if (tut?.active == true) return
+            GameAudio.play(Sfx.CLICK)
+            if (inventoryOpen) {
+                closeInventory()
+            } else {
+                inventoryOpen = true
+                renderInventory()
+            }
+        }
 
         var leaving = false
         fun goToMenu(toShop: Boolean = false) {
@@ -314,17 +423,105 @@ class DuelScene(
             )
         }
 
+        lateinit var restartRun: () -> Unit
+
+        fun closeGameMenu() = gameMenuLayer.removeChildren()
+
+
+        fun openAbandonConfirm() {
+            if (confirmLayer.numChildren > 0) return
+            val screen = views.actualVirtualBounds
+            confirmLayer.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 170)).position(screen.x, screen.y).onClick { }
+            confirmLayer.framePanel(panelArt, CONFIRM_PANEL_ART_W, CONFIRM_PANEL_ART_H).position(240, 150)
+            confirmLayer.pixelText("¿Abandonar la run?", 33) { position((960 - width.toInt()) / 2, 180) }
+            confirmLayer.pixelText("Se pierden el avance y los comodines.", 16) { position((960 - width.toInt()) / 2, 230) }
+            confirmLayer.artButton(
+                "Abandonar", buttonArt.getValue("Descartar"), 276, 282, true,
+                artWidth = DEATH_BUTTON_ART_W, labelSize = 22
+            ) {
+                closeConfirm()
+                closeGameMenu()
+                restartRun()
+            }
+            confirmLayer.artButton(
+                "Cancelar", buttonArt.getValue("Nueva Partida"), 486, 282, true,
+                artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = ::closeConfirm
+            )
+        }
+
+
+        fun openDecks(onBack: () -> Unit) {
+            gameMenuLayer.removeChildren()
+            val screen = views.actualVirtualBounds
+            gameMenuLayer.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 170)).position(screen.x, screen.y).onClick { closeGameMenu() }
+            val panelW = DECKS_PANEL_ART_W * ART_SCALE.toInt()
+            gameMenuLayer.framePanel(panelArt, DECKS_PANEL_ART_W, GAME_MENU_PANEL_ART_H).position((960 - panelW) / 2, 60).onClick { }
+            gameMenuLayer.pixelText("Mazos", 33) { position((960 - width.toInt()) / 2, 82) }
+            val backScale = 120.0 / cardBack.height
+            gameMenuLayer.image(cardBack) {
+                smoothing = false
+                scale(backScale)
+                position((960 - cardBack.width * backScale) / 2, 135.0)
+            }
+            gameMenuLayer.pixelText("Mazo clásico (52 cartas)", 22) { position((960 - width.toInt()) / 2, 268) }
+            gameMenuLayer.pixelText("En uso", 16, Colors["#81c784"]) { position((960 - width.toInt()) / 2, 302) }
+            gameMenuLayer.pixelText("Pronto habrá más mazos.", 16, Colors["#aaaaaa"]) { position((960 - width.toInt()) / 2, 328) }
+            val back = gameMenuLayer.plate("Volver", 0, 372)
+            back.x = (960 - back.width) / 2
+            back.onClick {
+                GameAudio.play(Sfx.CLICK)
+                onBack()
+            }
+        }
+
+
+        fun openGameMenu() {
+            if (tut?.active == true) return
+            gameMenuLayer.removeChildren()
+            val screen = views.actualVirtualBounds
+            gameMenuLayer.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 170)).position(screen.x, screen.y).onClick { closeGameMenu() }
+            val panelW = GAME_MENU_PANEL_ART_W * ART_SCALE.toInt()
+            val panelX = (960 - panelW) / 2
+            gameMenuLayer.framePanel(panelArt, GAME_MENU_PANEL_ART_W, GAME_MENU_PANEL_ART_H).position(panelX, 60).onClick { }
+            gameMenuLayer.pixelText("Menú", 33) { position((960 - width.toInt()) / 2, 82) }
+            val buttonX = (960 - DEATH_BUTTON_ART_W * ART_SCALE.toInt()) / 2
+            gameMenuLayer.artButton(
+                "Nueva run", buttonArt.getValue("Nueva Partida"), buttonX, 125, true,
+                artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = ::openAbandonConfirm
+            )
+            gameMenuLayer.artButton(
+                "Mazos", buttonArt.getValue("Duelo"), buttonX, 205, true,
+                artWidth = DEATH_BUTTON_ART_W, labelSize = 22
+            ) { openDecks(onBack = ::openGameMenu) }
+            gameMenuLayer.artButton(
+                "Salir al menú", buttonArt.getValue("Descartar"), buttonX, 285, true,
+                artWidth = DEATH_BUTTON_ART_W, labelSize = 18
+            ) {
+                closeGameMenu()
+                openConfirm()
+            }
+            val back = gameMenuLayer.plate("Volver", 0, 372)
+            back.x = (960 - back.width) / 2
+            back.onClick {
+                GameAudio.play(Sfx.CLICK)
+                closeGameMenu()
+            }
+        }
+
         keys {
             down(Key.ESCAPE, Key.BACK) {
                 when {
-                    handsLayer.numChildren > 0 -> handsLayer.removeChildren()
                     confirmLayer.numChildren > 0 -> closeConfirm()
+                    gameMenuLayer.numChildren > 0 -> closeGameMenu()
+                    inventoryOpen -> closeInventory()
+                    handsLayer.numChildren > 0 -> handsLayer.removeChildren()
                     duel.isFinished -> goToMenu()
                     else -> openConfirm()
                 }
             }
             down(Key.H) { toggleHands() }
-            down(Key.M) { GameAudio.toggleMute() }   // silenciar o activar el sonido
+            down(Key.C) { toggleInventory() }
+            down(Key.M) { GameAudio.toggleMute() }
         }
 
 
@@ -337,19 +534,18 @@ class DuelScene(
 
             val continueRun: () -> Unit = continueRun@{
                 val finished = result
-                if (finished != null && finished.event != RunEvent.RUN_OVER) {
-                    if (!tutorialMode && finished.event != RunEvent.NEXT_PHASE) {
-                        goToMenu(toShop = true)
-                        return@continueRun
-                    }
-                    gameRun.advance()
-                } else {
-                    nextSeed = Random.nextLong()
-                    bossSeed = Random.nextLong()
-                    gameRun.restart(bossSeed)
-                    views.saveRun(gameRun.cycle, gameRun.phase, nextSeed, bossSeed)
+                if (finished == null || finished.event == RunEvent.RUN_OVER) {
+                    restartRun()
+                    return@continueRun
                 }
+                // Después de cada jefe (cada 3 duelos) viene la tienda
+                if (tut?.active != true && finished.event != RunEvent.NEXT_PHASE) {
+                    goToMenu(toShop = true)
+                    return@continueRun
+                }
+                gameRun.advance()
                 duel = gameRun.duel
+                resetJokerState()
                 startEncounterAudio()
                 result = null
                 showOverlay = false
@@ -383,7 +579,13 @@ class DuelScene(
                     textSize = 22
                 )
             }
-            enemyLayer.plate("Rival - ${scoreText(enemy)}", ENEMY_X, ENEMY_Y + ENEMY_CARD_H + 8)
+
+            val rivalText = if (duel.targetBonusPercent > 0) {
+                "Rival - ${scoreText(enemy)} +${duel.targetBonusPercent}% = ${duel.targetScore}"
+            } else {
+                "Rival - ${scoreText(enemy)}"
+            }
+            enemyLayer.plate(rivalText, ENEMY_X, ENEMY_Y + ENEMY_CARD_H + 8)
 
 
             val player = duel.playerScore()
@@ -394,7 +596,7 @@ class DuelScene(
                 } else {
                     i in duel.selected
                 }
-                val debuffed = duel.debuff.affects(card)   // carta anulada por el jefe
+                val debuffed = duel.debuff.affects(card)
 
                 playerLayer.cardView(
                     card,
@@ -406,38 +608,54 @@ class DuelScene(
                     debuffed = debuffed
                 ) {
                     if (stealSwapMode) {
-                        // Robar una carta aleatoria del rival
-                        // e intercambiarla por la carta seleccionada
+
                         if (duel.stealAndSwap(i)) {
                             stealSwapMode = false
+                            consumeJoker(JokerType.STEAL_SWAP)
+                            GameAudio.play(Sfx.DRAW)
                             redraw()
+                        } else {
+                            GameAudio.play(Sfx.ERROR)
                         }
 
                     } else if (recoverDiscardMode) {
-                        // Recuperar la última carta descartada
+
                         if (duel.recoverLastDiscard(i)) {
                             recoverDiscardMode = false
+                            consumeJoker(JokerType.RECOVER)
+                            GameAudio.play(Sfx.DRAW)
                             redraw()
+                        } else {
+                            GameAudio.play(Sfx.ERROR)
                         }
 
                     } else if (aceChangeMode) {
-                        // Convertir la carta seleccionada en As
+
                         if (duel.convertToAce(i)) {
                             aceChangeMode = false
+                            consumeJoker(JokerType.TO_ACE)
+                            GameAudio.play(Sfx.CARD_SELECT)
                             redraw()
+                        } else {
+                            GameAudio.play(Sfx.ERROR)
                         }
 
                     } else if (suitChangeMode) {
 
-                        // Seleccionar carta para cambiar su palo
+
                         suitChangeTarget = i
+                        GameAudio.play(Sfx.CARD_SELECT)
                         redraw()
 
                     } else {
-                        // Selección normal para descartar
+
                         if (tut?.allows(TutorialWait.SELECT) != false) {
                             val wasSelected = i in duel.selected
-                            if (duel.toggleSelect(i)) GameAudio.play(if (wasSelected) Sfx.CARD_DESELECT else Sfx.CARD_SELECT) else GameAudio.play(Sfx.ERROR)
+                            if (duel.toggleSelect(i)) {
+                                GameAudio.play(if (wasSelected) Sfx.CARD_DESELECT else Sfx.CARD_SELECT)
+                            } else {
+                                GameAudio.play(Sfx.ERROR)
+                            }
                             redraw()
 
                             if (tut?.waiting(TutorialWait.SELECT) == true &&
@@ -475,9 +693,8 @@ class DuelScene(
 
                 suitOptions.forEachIndexed { i, (suit, label) ->
 
-                    val validOption =
-                        suit != targetCard.suit &&
-                            targetCard.copy(suit = suit) !in duel.playerHand
+
+                    val validOption = suit != targetCard.suit
 
                     val optionText = playerLayer.pixelText(
                         label,
@@ -493,10 +710,34 @@ class DuelScene(
                             if (duel.changeSuit(targetIndex, suit)) {
                                 suitChangeMode = false
                                 suitChangeTarget = null
+                                consumeJoker(JokerType.CHANGE_SUIT)
+                                GameAudio.play(Sfx.CARD_SELECT)
                                 redraw()
                             }
                         }
                     }
+                }
+            }
+
+
+            if (anyJokerMode()) {
+                val hint = when {
+                    suitChangeMode -> if (suitChangeTarget == null) "Cambiapalos: toca una carta" else null
+                    aceChangeMode -> "Todos As: toca la carta que será as"
+                    stealSwapMode -> "Intercambio: toca la carta que entregas"
+                    else -> duel.discardPile.lastOrNull()?.let { "Recuperar ${cardText(it)}: toca la carta a cambiar" }
+                }
+                var cancelX = CARDS_X + 200          // al lado de "Elegir nuevo palo:"
+                var cancelY = 340
+                if (hint != null) {
+                    val hintPlate = playerLayer.plate(hint, CARDS_X, JOKER_HINT_Y, color = Colors["#ffe082"])
+                    cancelX = CARDS_X + hintPlate.width.toInt() + 16
+                    cancelY = JOKER_HINT_Y
+                }
+                playerLayer.plate("Cancelar", cancelX, cancelY, color = Colors["#ff9e8a"]).onClick {
+                    GameAudio.play(Sfx.CLICK)
+                    cancelJokerModes()
+                    redraw()
                 }
             }
 
@@ -532,177 +773,15 @@ class DuelScene(
                 sideLayer.pixelText("Amarillo:\nmarcada", 16) { position(SIDE_X, 195) }
             }
 
-            if (!tutorialMode && !duel.isFinished) {
-                val visionText = sideLayer.pixelText(
-                    if (duel.visionUsed) "Vision usada" else "Usar Vision",
-                    16,
-                    if (duel.visionUsed) Colors["#aaaaaa"] else Colors["#ffe082"]
-                ) {
-                    position(SIDE_X, 235)
-                }
 
-                if (!duel.visionUsed) {
-                    visionText.onClick {
-                        val nextCard = duel.useVision()
-
-                        if (nextCard != null) {
-                            revealedCard = nextCard
-                            redraw()
-                        }
-                    }
-                }
+            if (tut?.active != true) {
+                enemyLayer.plate(
+                    "Comodines ${inventory.jokers.size}/${JokerInventory.MAX_SIZE} (C)",
+                    INVENTORY_BUTTON_X, INVENTORY_BUTTON_Y, color = Colors["#ffe082"]
+                ).onClick { toggleInventory() }
             }
 
-            if (!tutorialMode && !duel.isFinished) {
-                val suitText = sideLayer.pixelText(
-                    when {
-                        duel.suitChangeUsed -> "Palo usado"
-                        suitChangeMode -> "Cancelar palo"
-                        else -> "Cambiar palo"
-                    },
-                    16,
-                    if (duel.suitChangeUsed) Colors["#aaaaaa"] else Colors["#ffe082"]
-                ) {
-                    position(SIDE_X, 505)
-                }
-
-                if (!duel.suitChangeUsed) {
-                    suitText.onClick {
-                        suitChangeMode = !suitChangeMode
-                        recoverDiscardMode = false
-                        suitChangeTarget = null
-
-                        // Desactivar El As Supremo
-                        aceChangeMode = false
-
-                        redraw()
-                    }
-                }
-            }
-
-            if (!tutorialMode && !duel.isFinished) {
-                val aceText = playerLayer.pixelText(
-                    when {
-                        duel.aceChangeUsed -> "As usado"
-                        aceChangeMode -> "Cancelar As"
-                        else -> "Convertir en As"
-                    },
-                    16,
-                    if (duel.aceChangeUsed) Colors["#aaaaaa"]
-                    else Colors["#ffe082"]
-                ) {
-                    position(710, 170)
-                }
-
-                if (!duel.aceChangeUsed) {
-                    aceText.onClick {
-                        aceChangeMode = !aceChangeMode
-                        stealSwapMode = false
-                        recoverDiscardMode = false
-                        stealSwapMode = false
-                        suitChangeMode = false
-                        stealSwapMode = false
-                        suitChangeTarget = null
-
-                        redraw()
-                    }
-                }
-            }
-
-            if (!tutorialMode && !duel.isFinished) {
-
-                val canRecover = !duel.recoverDiscardUsed &&
-                    duel.discardPile.isNotEmpty()
-
-                val recoverText = playerLayer.pixelText(
-                    when {
-                        duel.recoverDiscardUsed -> "Descarte recuperado"
-                        recoverDiscardMode -> "Cancelar recuperar"
-                        else -> "Recuperar descarte"
-                    },
-                    16,
-                    if (canRecover) Colors["#ffe082"]
-                    else Colors["#aaaaaa"]
-                ) {
-                    position(710, 200)
-                }
-
-                if (canRecover) {
-                    recoverText.onClick {
-                        recoverDiscardMode = !recoverDiscardMode
-
-                        // Desactivar los otros modos
-                        aceChangeMode = false
-                        suitChangeMode = false
-                        suitChangeTarget = null
-
-                        redraw()
-                    }
-                }
-            }
-
-            if (!tutorialMode && !duel.isFinished) {
-
-                val kingText = playerLayer.pixelText(
-                    if (duel.kingsAsAcesActive) "Reyes activos"
-                    else "Reyes como Ases",
-                    16,
-                    if (duel.kingsAsAcesActive) Colors["#aaaaaa"]
-                    else Colors["#ffe082"]
-                ) {
-                    position(710, 140)
-                }
-
-                if (!duel.kingsAsAcesActive) {
-                    kingText.onClick {
-
-                        if (duel.activateKingsAsAces()) {
-                            stealSwapMode = false
-
-                            // Desactivar otros modos de selección
-                            aceChangeMode = false
-                            suitChangeMode = false
-                            suitChangeTarget = null
-                            recoverDiscardMode = false
-
-                            redraw()
-                        }
-                    }
-                }
-            }
-
-            if (!tutorialMode && !duel.isFinished) {
-
-                val stealText = playerLayer.pixelText(
-                    when {
-                        duel.stealSwapUsed -> "Robo usado"
-                        stealSwapMode -> "Cancelar robo"
-                        else -> "Robar e intercambiar"
-                    },
-                    16,
-                    if (duel.stealSwapUsed) Colors["#aaaaaa"]
-                    else Colors["#ffe082"]
-                ) {
-                    position(710, 110)
-                }
-
-                if (!duel.stealSwapUsed) {
-                    stealText.onClick {
-
-                        stealSwapMode = !stealSwapMode
-
-                        // Desactivar los otros modos
-                        aceChangeMode = false
-                        recoverDiscardMode = false
-                        suitChangeMode = false
-                        suitChangeTarget = null
-
-                        redraw()
-                    }
-                }
-            }
-
-            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard && !suitChangeMode && !aceChangeMode && !recoverDiscardMode && !stealSwapMode, sound = null) {
+            sideLayer.artButton("Descartar", buttonArt.getValue("Descartar"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Descartar") * 3, duel.canDiscard && !anyJokerMode(), sound = null) {
                 if (tut?.allows(TutorialWait.DISCARD) != false) {
                     duel.discardSelected()
                     GameAudio.play(Sfx.DISCARD)
@@ -711,11 +790,11 @@ class DuelScene(
                     if (tut?.waiting(TutorialWait.DISCARD) == true) tut?.advance()
                 }
             }
-            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished && !suitChangeMode && !aceChangeMode && !recoverDiscardMode && !stealSwapMode, sound = null) {
+            sideLayer.artButton("¡Duelo!", buttonArt.getValue("Duelo"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Duelo") * 3, !duel.isFinished && !anyJokerMode(), sound = null) {
                 if (tut?.allows(TutorialWait.FIGHT) != false) {
                     val fought = fight(duel, gameRun)
+                    views.saveInventory(inventory)
 
-                    // Sonido: primero el choque de espadas, después el resultado
                     GameAudio.play(Sfx.FIGHT)
                     if (fought.event == RunEvent.RUN_OVER || fought.event == RunEvent.RUN_WON) GameAudio.stopMusic()
                     val resultSfx = when (fought.event) {
@@ -754,7 +833,7 @@ class DuelScene(
                     } else if (fought.isDefeat) {
                         redraw()
                         this@DuelScene.launch { fadeToDeath() }
-                    } else if (tutorialMode) {
+                    } else if (tut?.active == true) {
                         showOverlay = true
                         redraw()
                     } else {
@@ -768,11 +847,12 @@ class DuelScene(
                 RunEvent.NEXT_PHASE -> "Siguiente\nfase"
                 RunEvent.CYCLE_CLEARED -> "Siguiente\nciclo"
                 RunEvent.RUN_WON -> "Modo\nsin fin"
-                else -> "Nueva\nrun"
+                RunEvent.RUN_OVER -> "Nueva\nrun"
+                null -> "Menú"
             }
             sideLayer.artButton(sideLabel, buttonArt.getValue("Nueva Partida"), SIDE_BUTTON_X, SIDE_BUTTONS.getValue("Nueva Partida") * 3, true) {
                 if (tut?.active == true) return@artButton
-                continueRun()
+                if (r == null) openGameMenu() else continueRun()
             }
 
 
@@ -842,12 +922,43 @@ class DuelScene(
                         "Ver manos", buttonArt.getValue("Nueva Partida"), 486, 270, true,
                         artWidth = DEATH_BUTTON_ART_W, labelSize = 22, onTap = showHands
                     )
-                    overlayLayer.artButton(
-                        "Menú", buttonArt.getValue("Descartar"), 276, 354, true,
-                        artWidth = MENU_BUTTON_ART_W, labelSize = 22, onTap = { goToMenu() }
-                    )
+                    if (r.event == RunEvent.RUN_WON) {
+                        // Ganó la run: puede seguir en modo sin fin o terminarla aquí
+                        overlayLayer.artButton(
+                            "Terminar run", buttonArt.getValue("Descartar"), 276, 354, true,
+                            artWidth = MENU_BUTTON_ART_W, labelSize = 22
+                        ) {
+                            views.clearSavedRun()
+                            goToMenu()
+                        }
+                    } else {
+                        overlayLayer.artButton(
+                            "Menú", buttonArt.getValue("Descartar"), 276, 354, true,
+                            artWidth = MENU_BUTTON_ART_W, labelSize = 22, onTap = { goToMenu() }
+                        )
+                    }
                 }
             }
+
+
+            if (inventoryOpen) renderInventory() else inventoryLayer.removeChildren()
+        }
+
+
+        restartRun = {
+            nextSeed = Random.nextLong()
+            bossSeed = Random.nextLong()
+            gameRun.restart(bossSeed)
+            views.saveRun(gameRun.cycle, gameRun.phase, nextSeed, bossSeed)
+            inventory = JokerInventory()
+            views.saveInventory(inventory)
+            duel = gameRun.duel
+            resetJokerState()
+            startEncounterAudio()
+            result = null
+            showOverlay = false
+            pickRival()
+            redraw()
         }
 
         fadeToDeath = {
@@ -863,6 +974,7 @@ class DuelScene(
             }
             black.tween(black::alpha[1.0], time = 1.0.seconds)
             motto.tween(motto::alpha[1.0], time = 0.8.seconds)
+            GameAudio.playMusic(MusicTrack.GAME_OVER)
             delay(2200)
             motto.tween(motto::alpha[0.0], time = 0.8.seconds)
             showOverlay = true
@@ -885,17 +997,145 @@ class DuelScene(
             black.tween(black::alpha[1.0], time = 1.0.seconds)
             text.tween(text::alpha[1.0], time = 0.8.seconds)
             delay(2200)
-            if (r.event != RunEvent.NEXT_PHASE) {
-                goToMenu(toShop = true)
-            } else {
-                gameRun.advance()
-                duel = gameRun.duel
-                result = null
-                pickRival()
+            if (r.event == RunEvent.RUN_WON) {
+
+                showOverlay = true
                 redraw()
                 text.tween(text::alpha[0.0], time = 0.8.seconds)
                 black.tween(black::alpha[0.0], time = 1.0.seconds)
                 fadeLayer.removeChildren()
+            } else if (r.event != RunEvent.NEXT_PHASE) {
+                goToMenu(toShop = true)
+            } else {
+                gameRun.advance()
+                duel = gameRun.duel
+                resetJokerState()
+                result = null
+                pickRival()
+                startEncounterAudio()
+                redraw()
+                text.tween(text::alpha[0.0], time = 0.8.seconds)
+                black.tween(black::alpha[0.0], time = 1.0.seconds)
+                fadeLayer.removeChildren()
+            }
+        }
+
+        // ---------- inventario de comodines ----------
+        renderInventory = {
+            inventoryLayer.removeChildren()
+            val screen = views.actualVirtualBounds
+            inventoryLayer.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 170))
+                .position(screen.x, screen.y)
+                .onClick { closeInventory() }
+            inventoryLayer.framePanel(panelArt, INVENTORY_PANEL_ART_W, INVENTORY_PANEL_ART_H)
+                .position(INVENTORY_PANEL_X, INVENTORY_PANEL_Y)
+                .onClick { }
+            inventoryLayer.pixelText("Comodines", 33) { position((960 - width.toInt()) / 2, INVENTORY_PANEL_Y + 22) }
+
+
+            val infoLayer = inventoryLayer.container()
+            fun showInfo(text: String, color: RGBA) {
+                infoLayer.removeChildren()
+                infoLayer.pixelText(text, 16, color) {
+                    position((960 - width.toInt()) / 2, JOKER_SLOT_Y + JOKER_SLOT_H + 14)
+                }
+            }
+            showInfo(INVENTORY_HINT, Colors["#d9b26a"])
+
+            fun useJoker(type: JokerType) {
+                closeInventory()
+                activateJoker(type)
+                redraw()
+            }
+
+
+            fun askToUse(type: JokerType) {
+                val dialog = inventoryLayer.container()
+                dialog.solidRect(screen.width, screen.height, RGBA(0, 0, 0, 150)).position(screen.x, screen.y).onClick { }
+                dialog.framePanel(panelArt, JOKER_CONFIRM_ART_W, 92).position(480 - JOKER_CONFIRM_ART_W * ART_SCALE.toInt() / 2, 130)
+                dialog.pixelText("¿Usar ${type.title}?", 33) { position((960 - width.toInt()) / 2, 152) }
+                dialog.pixelText(type.description, 16) { position((960 - width.toInt()) / 2, 204) }
+                dialog.pixelText("Se gasta al usarlo.", 16, Colors["#d9b26a"]) { position((960 - width.toInt()) / 2, 230) }
+
+                dialog.artButton(
+                    "Usar", buttonArt.getValue("Duelo"), 276, 276, true,
+                    artWidth = DEATH_BUTTON_ART_W, labelSize = 22, sound = null
+                ) { useJoker(type) }
+                dialog.artButton(
+                    "Cancelar", buttonArt.getValue("Nueva Partida"), 486, 276, true,
+                    artWidth = DEATH_BUTTON_ART_W, labelSize = 22
+                ) { dialog.removeFromParent() }
+            }
+
+
+            val slotsX = INVENTORY_PANEL_X + (INVENTORY_PANEL_ART_W * ART_SCALE.toInt() - (2 * JOKER_SLOT_W + JOKER_SLOT_GAP)) / 2
+            for (slot in 0 until JokerInventory.MAX_SIZE) {
+                val cell = inventoryLayer.container { position(slotsX + slot * (JOKER_SLOT_W + JOKER_SLOT_GAP), JOKER_SLOT_Y) }
+                cell.solidRect(JOKER_SLOT_W, JOKER_SLOT_H, RGBA(0, 0, 0, 90))
+                val type = inventory.jokers.getOrNull(slot)
+                if (type == null) {
+                    cell.pixelText("Vacío", 16, Colors["#888888"]) {
+                        position((JOKER_SLOT_W - width.toInt()) / 2, (JOKER_SLOT_H - height.toInt()) / 2)
+                    }
+                    continue
+                }
+
+                val blocked = duel.jokerBlockedReason(type)
+                val art = jokerArt.getValue(type)
+                cell.image(art) {
+                    smoothing = false
+                    scale(JOKER_ART_SCALE)
+                    position((JOKER_SLOT_W - art.width * JOKER_ART_SCALE) / 2, 6.0)
+                    if (blocked != null) colorMul = Colors["#707070"]
+                }
+                cell.pixelText(type.title, 16) { position((JOKER_SLOT_W - width.toInt()) / 2, JOKER_SLOT_H - 44) }
+                val status = when {
+                    blocked == null -> "Disponible"
+                    duel.jokerUsed(type) -> "Usado"
+                    else -> "No disponible"
+                }
+                cell.pixelText(status, 16, if (blocked == null) Colors["#81c784"] else Colors["#aaaaaa"]) {
+                    position((JOKER_SLOT_W - width.toInt()) / 2, JOKER_SLOT_H - 22)
+                }
+
+                cell.onTapOrHold(
+                    holdSeconds = JOKER_HOLD_SECONDS,
+                    onHold = {
+                        GameAudio.play(Sfx.CLICK)
+                        showInfo(type.description, Colors.WHITE)
+                    },
+                    onTap = {
+                        when {
+                            blocked != null -> {
+                                GameAudio.play(Sfx.ERROR)
+                                showInfo(blocked, Colors["#ff9e8a"])
+                            }
+                            confirmJokers -> {
+                                GameAudio.play(Sfx.CLICK)
+                                askToUse(type)
+                            }
+                            else -> useJoker(type)
+                        }
+                    }
+                )
+            }
+
+
+            val confirmLabel = if (confirmJokers) "[X] Pedir confirmación antes de usar" else "[  ] Pedir confirmación antes de usar"
+            val confirmCheck = inventoryLayer.plate(confirmLabel, 0, JOKER_SLOT_Y + JOKER_SLOT_H + 52, color = Colors["#d9b26a"])
+            confirmCheck.x = (960 - confirmCheck.width) / 2
+            confirmCheck.onClick {
+                GameAudio.play(Sfx.CLICK)
+                confirmJokers = !confirmJokers
+                views.saveConfirmJokers(confirmJokers)
+                renderInventory()
+            }
+
+            val close = inventoryLayer.plate("Cerrar (C)", 0, JOKER_SLOT_Y + JOKER_SLOT_H + 96)
+            close.x = (960 - close.width) / 2
+            close.onClick {
+                GameAudio.play(Sfx.CLICK)
+                closeInventory()
             }
         }
 
@@ -954,7 +1194,7 @@ class DuelScene(
             }
         }
 
-        startEncounterAudio()   // música del encuentro y sonido de reparto al entrar
+        startEncounterAudio()
         redraw()
         tut?.render()
     }
@@ -978,14 +1218,14 @@ private fun Container.cardView(
 
     position(x, y)
 
-    // Color de fondo según el estado de la carta
+
     val bg = when {
         selected -> Colors["#ffe082"]
         scoring -> Colors["#c8e6c9"]
         else -> Colors.WHITE
     }
 
-    // Borde exterior de la carta
+
     solidRect(w + 4, h + 4, Colors["#2b1608"])
         .position(-2, -2)
 
@@ -1006,7 +1246,7 @@ private fun Container.cardView(
 
     } else {
 
-        // Si todavía no existe PNG, mostrar texto
+
         val ink = if (
             card.suit == Suit.HEARTS ||
             card.suit == Suit.DIAMONDS
@@ -1020,7 +1260,7 @@ private fun Container.cardView(
         }
     }
 
-    // Carta anulada por el jefe: se oscurece (sigue formando la mano, pero no suma fichas)
+
     if (debuffed) solidRect(w, h, RGBA(0, 0, 0, 130))
 
     if (selected || scoring) {
@@ -1030,14 +1270,13 @@ private fun Container.cardView(
             Colors["#81c784"]
         }
 
-        // Bordes indicadores
         solidRect(w, 3, borderColor)
         solidRect(w, 3, borderColor).position(0, h - 3)
         solidRect(3, h, borderColor)
         solidRect(3, h, borderColor).position(w - 3, 0)
     }
 
-    // Mantener la interacción
+
     if (onTap != null) {
         onClick { onTap() }
     }
@@ -1047,7 +1286,7 @@ private fun Container.cardView(
 internal fun Container.artButton(
     label: String, art: Bitmap, x: Int, y: Int, enabled: Boolean,
     artWidth: Int = art.width, labelSize: Int = 16,
-    sound: Sfx? = Sfx.CLICK,   // null: el botón reproduce su propio sonido
+    sound: Sfx? = Sfx.CLICK,
     onTap: () -> Unit
 ): Container = container {
     position(x, y)
@@ -1078,7 +1317,7 @@ internal fun Container.artButton(
             onTap()
         }
     } else {
-        onClick { GameAudio.play(Sfx.ERROR) }   // botón desactivado
+        onClick { GameAudio.play(Sfx.ERROR) }
     }
 }
 
@@ -1180,4 +1419,30 @@ private fun bossFocusBitmap(): Bitmap32 {
         bitmap[x, y] = RGBA(0, 0, 0, (BOSS_FOCUS_MAX_ALPHA * t * t * (3 - 2 * t)).toInt())
     }
     return bitmap
+}
+
+
+private fun View.onTapOrHold(holdSeconds: Double, onHold: () -> Unit, onTap: () -> Unit) {
+    var pressed = false
+    var held = false
+    var elapsed = 0.0
+    onDown {
+        pressed = true
+        held = false
+        elapsed = 0.0
+    }
+    onUp {
+        if (pressed && !held) onTap()
+        pressed = false
+    }
+    onUpOutside { pressed = false }
+    addUpdater { dt ->
+        if (pressed && !held) {
+            elapsed += dt.inWholeMilliseconds / 1000.0
+            if (elapsed >= holdSeconds) {
+                held = true
+                onHold()
+            }
+        }
+    }
 }

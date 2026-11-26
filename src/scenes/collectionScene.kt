@@ -11,10 +11,11 @@ import korlibs.korge.tween.*
 import korlibs.korge.view.*
 import korlibs.korge.view.animation.*
 import kotlinx.coroutines.launch
+import model.JokerType
 import kotlin.math.sin
 import kotlin.time.Duration.Companion.seconds
 
-private const val COLLECTION_COLS = 4
+private const val COLLECTION_COLS = 3
 private const val COLLECTION_Y = 76
 private const val COLLECTION_ART_H = 136
 private const val COLLECTION_GRID_X = 36
@@ -25,11 +26,19 @@ private const val COLLECTION_PAD = 30
 private const val COLLECTION_CARD_SCALE = 1.5
 private const val COLLECTION_PREVIEW_SCALE = 2.0
 private const val COLLECTION_DIM_ALPHA = 150
+private val LOCKED_TINT = RGBA(25, 20, 30, 255)
+private const val LOCKED_NAME = "???"
+private const val LOCKED_HINT = "Encuéntralo en la tienda y úsalo para desbloquearlo."
+
+
+private val COLLECTION_JOKERS = JokerType.entries
 
 class CollectionScene : Scene() {
 
     override suspend fun SContainer.sceneInit() {
         loadPixelFont()
+        GameAudio.load(views)
+        GameAudio.playMusic(MusicTrack.MENU)
 
         val menuArt = resourcesVfs["escena_menu.ase"].readImageData(ASE.toProps())
         val uiArt = resourcesVfs["escena_mosquetero.ase"].readImageData(ASE.toProps().also {
@@ -37,7 +46,9 @@ class CollectionScene : Scene() {
             it.setExtra("layers", "Barra Lateral")
         })
         val panelArt = uiArt.frames.first().layerData.first { it.layer.name == "Barra Lateral" }.bitmap
-        val jokerArt = JOKERS.associateWith { resourcesVfs["comodines/${it.file}.ase"].readImageData(ASE.toProps()).mainBitmap }
+        val unlocked = views.loadUnlockedJokers()
+        fun isUnlocked(joker: JokerType) = joker in unlocked
+        val jokerArt = COLLECTION_JOKERS.associateWith { resourcesVfs["comodines/${it.file}.ase"].readImageData(ASE.toProps()).mainBitmap }
 
         solidRect(4960, 4540, Colors.BLACK).position(-2000, -2000)
         val background = imageDataView(menuArt, playing = true, smoothing = false) {
@@ -56,11 +67,23 @@ class CollectionScene : Scene() {
         framePanel(panelArt, COLLECTION_GRID_ART_W, COLLECTION_ART_H).position(COLLECTION_GRID_X, COLLECTION_Y)
         framePanel(panelArt, COLLECTION_INFO_ART_W, COLLECTION_ART_H).position(COLLECTION_INFO_X, COLLECTION_Y)
 
-        val rows = (JOKERS.size + COLLECTION_COLS - 1) / COLLECTION_COLS
+        val rows = (COLLECTION_JOKERS.size + COLLECTION_COLS - 1) / COLLECTION_COLS
         val cellW = (gridW - 2 * COLLECTION_PAD) / COLLECTION_COLS
         val cellH = (panelH - 2 * COLLECTION_PAD) / rows
         val cellsX = COLLECTION_GRID_X + COLLECTION_PAD
         val cellsY = COLLECTION_Y + COLLECTION_PAD
+
+
+        fun cellX(i: Int): Int {
+            val row = i / COLLECTION_COLS
+            val inRow = minOf(COLLECTION_COLS, COLLECTION_JOKERS.size - row * COLLECTION_COLS)
+            return cellsX + (COLLECTION_COLS - inRow) * cellW / 2 + i % COLLECTION_COLS * cellW
+        }
+        fun cellY(i: Int): Int = cellsY + i / COLLECTION_COLS * cellH
+
+        val found = COLLECTION_JOKERS.count { isUnlocked(it) }
+        val counter = plate("Desbloqueados: $found/${COLLECTION_JOKERS.size}", 0, 500, Colors["#ffe08a"])
+        counter.x = COLLECTION_INFO_X + infoW - counter.width
 
         val info = container()
         val glow = container()
@@ -90,23 +113,37 @@ class CollectionScene : Scene() {
         var selected = 0
         var leaving = false
 
-        fun select(index: Int) {
+        fun select(index: Int, sound: Boolean = false) {
+            if (sound && index != selected) GameAudio.play(Sfx.CLICK)
             selected = index
-            val joker = JOKERS[index]
+            val joker = COLLECTION_JOKERS[index]
             val art = jokerArt.getValue(joker)
             val centerX = COLLECTION_INFO_X + infoW / 2
             info.removeChildren()
+            val open = isUnlocked(joker)
             info.image(art) {
                 smoothing = false
                 scale(COLLECTION_PREVIEW_SCALE)
                 position(centerX - art.width * COLLECTION_PREVIEW_SCALE / 2, COLLECTION_Y + 40.0)
+                if (!open) colorMul = LOCKED_TINT
             }
-            info.pixelText(joker.name, 22, Colors["#ffe08a"]) { position(centerX - width.toInt() / 2, COLLECTION_Y + 232) }
-            info.pixelText(wrap(joker.description, 16, infoW - 2 * COLLECTION_PAD), 16) {
-                position(COLLECTION_INFO_X + COLLECTION_PAD, COLLECTION_Y + 276)
+            if (!open) {
+                info.pixelText("?", 44, Colors["#d9b26a"]) {
+                    position(centerX - width.toInt() / 2, COLLECTION_Y + 40 + (art.height * COLLECTION_PREVIEW_SCALE - height).toInt() / 2)
+                }
             }
-            val x = cellsX + index % COLLECTION_COLS * cellW
-            val y = cellsY + index / COLLECTION_COLS * cellH
+            info.pixelText(if (open) joker.title else LOCKED_NAME, 22, Colors["#ffe08a"]) {
+                position(centerX - width.toInt() / 2, COLLECTION_Y + 232)
+            }
+            // Descripción centrada línea por línea
+            val text = if (open) joker.description else LOCKED_HINT
+            wrap(text, 16, infoW - 2 * COLLECTION_PAD).split("\n").forEachIndexed { line, part ->
+                info.pixelText(part, 16, if (open) Colors.WHITE else Colors["#bbbbbb"]) {
+                    position(centerX - width.toInt() / 2, COLLECTION_Y + 276 + line * 22)
+                }
+            }
+            val x = cellX(index)
+            val y = cellY(index)
             val c = Colors["#ffd54f"]
             glow.removeChildren()
             glow.solidRect(cellW, 3, c).position(x, y)
@@ -132,20 +169,27 @@ class CollectionScene : Scene() {
             }
         }
 
-        JOKERS.forEachIndexed { i, joker ->
-            val x = cellsX + i % COLLECTION_COLS * cellW
-            val y = cellsY + i / COLLECTION_COLS * cellH
+        COLLECTION_JOKERS.forEachIndexed { i, joker ->
+            val x = cellX(i)
+            val y = cellY(i)
             val art = jokerArt.getValue(joker)
+            val open = isUnlocked(joker)
             val cell = container()
             cell.solidRect(cellW, cellH, Colors.TRANSPARENT).position(x, y)
             cell.image(art) {
                 smoothing = false
                 scale(COLLECTION_CARD_SCALE)
                 position(x + (cellW - art.width * COLLECTION_CARD_SCALE) / 2, y + 8.0)
+                if (!open) colorMul = LOCKED_TINT
             }
-            cell.pixelText(joker.name, 16) { position(x + (cellW - width.toInt()) / 2, y + 146) }
-            cell.onOver { select(i) }
-            cell.onClick { select(i) }
+            if (!open) {
+                cell.pixelText("?", 33, Colors["#d9b26a"]) {
+                    position(x + (cellW - width.toInt()) / 2, y + 8 + (art.height * COLLECTION_CARD_SCALE - height).toInt() / 2)
+                }
+            }
+            cell.pixelText(if (open) joker.title else LOCKED_NAME, 16, if (open) Colors.WHITE else Colors["#aaaaaa"]) { position(x + (cellW - width.toInt()) / 2, y + 146) }
+            cell.onOver { select(i, sound = true) }
+            cell.onClick { select(i, sound = true) }
         }
         addChild(glow)
 
@@ -156,10 +200,10 @@ class CollectionScene : Scene() {
 
         keys {
             down(Key.ESCAPE, Key.BACK) { backToMenu() }
-            down(Key.LEFT) { select((selected + JOKERS.size - 1) % JOKERS.size) }
-            down(Key.RIGHT) { select((selected + 1) % JOKERS.size) }
-            down(Key.UP) { select((selected + JOKERS.size - COLLECTION_COLS) % JOKERS.size) }
-            down(Key.DOWN) { select((selected + COLLECTION_COLS) % JOKERS.size) }
+            down(Key.LEFT) { select((selected + COLLECTION_JOKERS.size - 1) % COLLECTION_JOKERS.size, sound = true) }
+            down(Key.RIGHT) { select((selected + 1) % COLLECTION_JOKERS.size, sound = true) }
+            down(Key.UP) { select((selected + COLLECTION_JOKERS.size - COLLECTION_COLS) % COLLECTION_JOKERS.size, sound = true) }
+            down(Key.DOWN) { select((selected + COLLECTION_COLS) % COLLECTION_JOKERS.size, sound = true) }
         }
 
         select(0)

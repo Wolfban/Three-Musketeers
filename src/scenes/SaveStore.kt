@@ -14,9 +14,45 @@ internal fun Views.saveRun(cycle: Int, phase: Int, seed: Long, bossSeed: Long) {
     storage[SAVED_RUN_KEY] = SavedRun(cycle, phase, seed, bossSeed).encode()
 }
 
+/** Termina la run guardada: borra la partida y los comodines que tenía. */
 internal fun Views.clearSavedRun() {
     storage[SAVED_RUN_KEY] = ""
+    storage[INVENTORY_KEY] = ""
 }
+
+// ---------- comodines ----------
+
+internal const val INVENTORY_KEY = "jokerInventory"
+internal const val CONFIRM_JOKERS_KEY = "confirmJokers"
+
+internal fun Views.loadInventory(): JokerInventory = JokerInventory.decode(storage.getOrNull(INVENTORY_KEY))
+
+internal fun Views.saveInventory(inventory: JokerInventory) {
+    storage[INVENTORY_KEY] = inventory.encode()
+}
+
+/** true (por defecto): pedir confirmación antes de usar un comodín. */
+internal fun Views.loadConfirmJokers(): Boolean = storage.getOrNull(CONFIRM_JOKERS_KEY) != "0"
+
+internal fun Views.saveConfirmJokers(confirm: Boolean) {
+    storage[CONFIRM_JOKERS_KEY] = if (confirm) "1" else "0"
+}
+
+// ---------- colección ----------
+
+internal const val UNLOCKED_JOKERS_KEY = "unlockedJokers"
+
+internal fun Views.loadUnlockedJokers(): Set<JokerType> = JokerUnlocks.decode(storage.getOrNull(UNLOCKED_JOKERS_KEY))
+
+/** Desbloquea un comodín en la colección. Devuelve true si es la primera vez. */
+internal fun Views.unlockJoker(type: JokerType): Boolean {
+    val unlocked = loadUnlockedJokers()
+    if (type in unlocked) return false
+    storage[UNLOCKED_JOKERS_KEY] = JokerUnlocks.encode(unlocked + type)
+    return true
+}
+
+// ---------- estadísticas ----------
 
 internal const val BEST_RUN_KEY = "bestRunWins"
 
@@ -34,9 +70,15 @@ internal fun Views.recordRunWon() {
     storage[RUNS_WON_KEY] = (loadRunsWon() + 1).toString()
 }
 
+/** Borra el récord, las runs ganadas y la colección (todos los comodines vuelven a estar ocultos). El nombre se mantiene. */
+internal fun Views.clearStats() {
+    storage[BEST_RUN_KEY] = ""
+    storage[RUNS_WON_KEY] = ""
+    storage[UNLOCKED_JOKERS_KEY] = ""
+}
+
 internal fun Views.loadPlayerName(): String? = PlayerName.clean(storage.getOrNull(PLAYER_NAME_KEY))
 
 internal fun Views.savePlayerName(name: String) {
     storage[PLAYER_NAME_KEY] = name
 }
-

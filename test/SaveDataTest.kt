@@ -12,14 +12,15 @@ class SaveDataTest {
     }
 
     @Test fun invalidDataIsIgnored() {
-        listOf(null, "", "   ", "abc", "1;2", "1;2;3;4", "0;1;5", "1;0;5", "1;4;5", "1;x;5", "1;2;y").forEach {
+        listOf(null, "", "   ", "abc", "1;2", "1;2;3;4;5", "0;1;5", "1;0;5", "1;4;5", "1;x;5", "1;2;y").forEach {
             assertNull(SavedRun.decode(it), "Debería ignorar: $it")
         }
     }
 
     @Test fun runResumesAtSavedCheckpoint() {
-        val run = Run(2, 3) { Deck(Random(7L)) }
-        assertEquals(2, run.cycle)
+        // Sin semilla de jefes, el jefe del ciclo 1 es el de menos descartes
+        val run = Run(1, 3) { Deck(Random(7L)) }
+        assertEquals(1, run.cycle)
         assertEquals(3, run.phase)
         assertTrue(run.encounter.isBoss)
         assertEquals(Difficulty.BOSS_ROUNDS, run.duel.maxRounds)

@@ -57,11 +57,8 @@ class Duel(
         if (discardPile.isEmpty()) return false
         if (index !in playerHand.indices) return false
 
-        // Obtener la última carta descartada
+        // Obtener la última carta descartada (puede repetir una carta de la mano: los comodines no tienen límites)
         val recoveredCard = discardPile.last()
-
-        // Evitar cartas duplicadas en la mano
-        if (recoveredCard in playerHand) return false
 
         // Guardar la carta que vamos a reemplazar
         val replacedCard = playerHand[index]
@@ -168,11 +165,8 @@ class Duel(
         // No permitir cambiar al mismo palo
         if (originalCard.suit == newSuit) return false
 
-        // Crear la carta con el nuevo palo
+        // Crear la carta con el nuevo palo (puede quedar repetida en la mano: está permitido)
         val newCard = originalCard.copy(suit = newSuit)
-
-        // Evitar cartas idénticas en la misma mano
-        if (newCard in playerHand) return false
 
         // Reemplazar la carta original
         playerHand[index] = newCard
@@ -191,9 +185,8 @@ class Duel(
 
         if (originalCard.rank == Rank.ACE) return false
 
-        val newCard = originalCard.copy(rank = Rank.ACE)
 
-        if (newCard in playerHand) return false
+        val newCard = originalCard.copy(rank = Rank.ACE)
 
         playerHand[index] = newCard
 
@@ -219,37 +212,20 @@ class Duel(
         // Carta que el jugador entregará
         val offeredCard = playerHand[playerIndex]
 
-        // Buscar cartas del rival que puedan intercambiarse
-        // sin crear duplicados dentro de ninguna mano
-        val validEnemyIndices = enemyHand.indices.filter { enemyIndex ->
+        // Cualquier carta del rival vale, aunque quede repetida en alguna mano
+        if (enemyHand.isEmpty()) return false
 
-            val stolenCard = enemyHand[enemyIndex]
-
-            val validForPlayer = playerHand.indices.none {
-                it != playerIndex && playerHand[it] == stolenCard
-            }
-
-            val validForEnemy = enemyHand.indices.none {
-                it != enemyIndex && enemyHand[it] == offeredCard
-            }
-
-            validForPlayer && validForEnemy
-        }
-
-        if (validEnemyIndices.isEmpty()) return false
-
-        // Elegir aleatoriamente una carta válida del rival
-        val enemyIndex = validEnemyIndices.random()
+        // Elegir aleatoriamente una carta del rival
+        val enemyIndex = enemyHand.indices.random()
         val stolenCard = enemyHand[enemyIndex]
 
-        // Intercambiar las cartas
         playerHand[playerIndex] = stolenCard
         enemyHand[enemyIndex] = offeredCard
 
-        // Limpiar las selecciones
+
         _selected.clear()
 
-        // Marcar el comodín como utilizado
+
         stealSwapUsed = true
 
         return true

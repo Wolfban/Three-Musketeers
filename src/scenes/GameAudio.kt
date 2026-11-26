@@ -1,11 +1,12 @@
 package scenes
 
 import korlibs.audio.sound.*
+import korlibs.event.*
 import korlibs.io.file.std.*
 import korlibs.korge.service.storage.*
 import korlibs.korge.view.*
 
-/** Efectos de sonido. Los archivos van en resources/sfx/. El volumen es relativo (0.0 a 1.0). */
+
 enum class Sfx(val file: String, val volume: Double) {
     CLICK("sfx/click.wav", 0.35),
     CARD_SELECT("sfx/card_select.wav", 0.4),
@@ -22,11 +23,12 @@ enum class Sfx(val file: String, val volume: Double) {
     LOSE("sfx/lose.wav", 0.55)
 }
 
-/** Música de fondo en bucle. Los archivos van en resources/music/. */
 enum class MusicTrack(val file: String) {
     MENU("music/menu.wav"),
     DUEL("music/duel.wav"),
-    BOSS("music/boss.wav")
+    BOSS("music/boss.wav"),
+    SHOP("music/shop.wav"),
+    GAME_OVER("music/gameover.wav")
 }
 
 /**
@@ -52,6 +54,12 @@ object GameAudio {
         if (this.views != null) return
         this.views = views
         muted = views.storage.getOrNull(MUTED_KEY) == "1"
+
+        views.gameWindow.onEvent(PauseEvent) {
+            musicChannel?.stop()
+            musicChannel = null
+        }
+        views.gameWindow.onEvent(ResumeEvent) { startMusic() }
         for (sfx in Sfx.entries) {
             try {
                 sounds[sfx] = resourcesVfs[sfx.file].readSound()
@@ -108,7 +116,7 @@ object GameAudio {
         if (muted) return
         val v = views ?: return
         val sound = music[currentTrack ?: return] ?: return
-        // Se usa el contexto de views y no el de la escena: así la música no se corta al cambiar de escena
+
         musicChannel = sound.play(
             v.coroutineContext,
             PlaybackParameters(times = infinitePlaybackTimes, volume = MUSIC_VOLUME)

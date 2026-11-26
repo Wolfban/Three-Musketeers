@@ -11,6 +11,9 @@ private fun categoryName(c: HandCategory) = when (c) {
     HandCategory.FOUR_OF_A_KIND -> "Poker (four of a kind)"
     HandCategory.STRAIGHT_FLUSH -> "Escalera de color"
     HandCategory.ROYAL_FLUSH -> "Escalera real (royal flush)"
+    HandCategory.FIVE_OF_A_KIND -> "Quinta (five of a kind)"
+    HandCategory.FLUSH_HOUSE -> "Full house de color (flush house)"
+    HandCategory.FLUSH_FIVE -> "Quinta de color (flush five)"
 }
 
 private fun cardText(card: Card): String {
@@ -95,6 +98,9 @@ private fun playDuel(duel: Duel): Boolean {
     println()
     println("RIVAL:   ${handText(duel.enemyHand, duel.enemyScore, false)}")
     println("         ${describe(duel.enemyScore)}")
+    if (duel.targetBonusPercent > 0) {
+        println("         Objetivo sin fin: +${duel.targetBonusPercent}% = ${duel.targetScore}")
+    }
     println("(* = carta que suma puntos)")
     println(">>> Debes superar ${duel.targetScore} puntos <<<")
 
